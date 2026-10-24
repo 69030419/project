@@ -1,6 +1,6 @@
 # ระบบร้านเช่าเครื่องเกม (Game Console Rental)
 
-แอปเดสก์ท็อปด้วย Python + Tkinter + SQLite สำหรับร้านให้เช่าเครื่องเกม
+แอปเดสก์ท็อปด้วย Python + Tkinter + PostgreSQL สำหรับร้านให้เช่าเครื่องเกม
 (โปรเจกต์วิชาเขียนโปรแกรม + วิชาฐานข้อมูล)
 
 ## แบ่งงาน
@@ -9,36 +9,62 @@
 |------|-------------|--------|---------|
 | `ui.py` | Suthinun | `feature/suthinun-ui` | หน้าจอ Tkinter เรียกได้เฉพาะ `logic.py` |
 | `logic.py` | Ariyawong | `feature/Ariyawong` | ตรวจสอบข้อมูล คิดราคา/ค่าปรับ เรียกได้เฉพาะ `database.py` |
-| `database.py` | Kitthin | `feature/kitthin` | SQLite เก็บ/ดึงข้อมูลอย่างเดียว ไม่มีกฎธุรกิจ |
+| `database.py` | Kitthin | `feature/kitthin` | PostgreSQL เก็บ/ดึงข้อมูลอย่างเดียว ไม่มีกฎธุรกิจ |
 
 กฎสำคัญ: **ui → logic → database** (ห้ามข้ามชั้น)
+
+## ติดตั้งและตั้งค่า (ทุกคนทำในเครื่องตัวเอง)
+
+1. ติดตั้ง PostgreSQL และสร้างฐานข้อมูลชื่อ `game_rental`
+   ```sql
+   CREATE DATABASE game_rental;
+   ```
+2. ติดตั้งไลบรารี
+   ```
+   pip install psycopg2-binary
+   ```
+3. สร้างไฟล์ `db_config.py` (คัดลอกจาก `db_config.example.py`) แล้วใส่รหัสผ่านของตัวเอง
+   ```python
+   DB_CONFIG = {
+       "host": "localhost",
+       "port": 5432,
+       "dbname": "game_rental",
+       "user": "postgres",
+       "password": "ใส่รหัสผ่านของคุณ",
+   }
+   ```
+4. **ห้าม commit `db_config.py`** เพราะ repo เป็น Public ให้เพิ่มบรรทัดนี้ใน `.gitignore`
+   ```
+   db_config.py
+   ```
+   และ commit เฉพาะ `db_config.example.py` (ใส่รหัสผ่านปลอมไว้)
 
 ## โครงสร้างฐานข้อมูล
 
 ```sql
 CREATE TABLE IF NOT EXISTS consoles (
-    console_id  INTEGER PRIMARY KEY AUTOINCREMENT,
-    name        TEXT    NOT NULL,                  -- เช่น "PS5 #1"
-    platform    TEXT    NOT NULL,                  -- PS5 / Switch / Xbox ...
-    daily_rate  REAL    NOT NULL CHECK (daily_rate > 0),
-    status      TEXT    NOT NULL DEFAULT 'available'
+    console_id  SERIAL PRIMARY KEY,
+    name        VARCHAR(100)  NOT NULL,                -- เช่น 'PS5 #1'
+    platform    VARCHAR(50)   NOT NULL,                -- PS5 / Switch / Xbox ...
+    daily_rate  NUMERIC(10,2) NOT NULL CHECK (daily_rate > 0),
+    status      VARCHAR(20)   NOT NULL DEFAULT 'available'
                 CHECK (status IN ('available', 'rented'))
 );
 
 CREATE TABLE IF NOT EXISTS customers (
-    customer_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name        TEXT NOT NULL,
-    phone       TEXT NOT NULL UNIQUE
+    customer_id SERIAL PRIMARY KEY,
+    name        VARCHAR(100) NOT NULL,
+    phone       VARCHAR(10)  NOT NULL UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS rentals (
-    rental_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    rental_id    SERIAL PRIMARY KEY,
     console_id   INTEGER NOT NULL REFERENCES consoles(console_id),
     customer_id  INTEGER NOT NULL REFERENCES customers(customer_id),
-    rent_date    TEXT NOT NULL,                    -- YYYY-MM-DD
-    due_date     TEXT NOT NULL,                    -- YYYY-MM-DD
-    return_date  TEXT,                             -- NULL = ยังไม่คืน
-    total_price  REAL NOT NULL DEFAULT 0
+    rent_date    DATE NOT NULL,
+    due_date     DATE NOT NULL CHECK (due_date >= rent_date),
+    return_date  DATE,                                 -- NULL = ยังไม่คืน
+    total_price  NUMERIC(10,2) NOT NULL DEFAULT 0
 );
 ```
 
@@ -55,23 +81,27 @@ rental = {"rental_id": 1, "console_name": "PS5 #1", "customer_name": "สมช�
           "due_date": "2026-10-26", "return_date": None, "total_price": 400.0}
 ```
 
-วันที่ใช้รูปแบบ `YYYY-MM-DD` เสมอ
+ข้อตกลงเรื่องชนิดข้อมูล (PostgreSQL คืน `date` และ `Decimal` ซึ่งไม่เหมือนที่ชั้นบนต้องการ):
+- `database.py` ต้องแปลงก่อนคืนเสมอ: วันที่เป็น string `YYYY-MM-DD` (`str(value)` หรือ `.isoformat()`) และ `NUMERIC` เป็น `float`
+- เวลาส่งค่าเข้า SQL ใช้ placeholder `%s` เสมอ ห้ามต่อ string เอง (กัน SQL injection)
 
 ## สัญญาฟังก์ชัน
 
 ### `database.py` (Kitthin)
 ```python
 init_db() -> None                                  # สร้างตารางถ้ายังไม่มี
-insert_console(name, platform, daily_rate) -> int
+insert_console(name, platform, daily_rate) -> int  # INSERT ... RETURNING console_id
 fetch_all_consoles() -> list[dict]                 # คืน console dict
 fetch_console(console_id) -> dict | None
 set_console_status(console_id, status) -> None     # 'available' | 'rented'
 find_or_create_customer(name, phone) -> int        # คืน customer_id
-insert_rental(console_id, customer_id, rent_date, due_date) -> int
+insert_rental(console_id, customer_id, rent_date, due_date) -> int   # RETURNING rental_id
 fetch_all_rentals() -> list[dict]                  # คืน rental dict (JOIN แล้ว)
 fetch_rental(rental_id) -> dict | None
 close_rental(rental_id, return_date, total_price) -> None
 ```
+
+ทุกฟังก์ชันเปิด connection ผ่าน `psycopg2.connect(**DB_CONFIG)`, `commit()` เมื่อสำเร็จ และปิด connection เสมอ
 
 ### `logic.py` (Ariyawong)
 ```python
