@@ -19,6 +19,7 @@ THEME_DARK = "darkly"
 THEME_LIGHT = "flatly"
 
 STATUS_TH = {"available": "ว่าง", "rented": "ถูกเช่า"}
+PLATFORMS = ["PS5", "PS4", "Xbox Series X", "Xbox One", "Nintendo Switch", "Steam Deck"]
 
 COLOR_OK = "#20c997"
 COLOR_WARN = "#fd7e14"
@@ -77,6 +78,10 @@ class App(ttk.Window):
         self.rent_days = tk.StringVar(value="1")
         self.rent_estimate = tk.StringVar(value="ราคาโดยประมาณ: -")
 
+        self.new_name = tk.StringVar()
+        self.new_platform = tk.StringVar()
+        self.new_rate = tk.StringVar()
+
         self.apply_style()
         self.build_header()
 
@@ -87,6 +92,7 @@ class App(ttk.Window):
         self.build_rent_tab()
         self.build_return_tab()
         self.build_history_tab()
+        self.build_add_console_tab()
 
         self.rent_console.trace_add("write", self.update_estimate)
         self.rent_days.trace_add("write", self.update_estimate)
@@ -225,6 +231,45 @@ class App(ttk.Window):
             ("customer_name", "ลูกค้า", 150), ("rent_date", "เช่า", 110),
             ("due_date", "กำหนดคืน", 110), ("return_date", "คืนจริง", 110),
             ("total_price", "ราคารวม (บาท)", 120)])
+
+    # ---------- แท็บ 5: เพิ่มเครื่อง ----------
+    def build_add_console_tab(self):
+        tab = ttk.Frame(self.notebook, padding=24)
+        self.notebook.add(tab, text="  เพิ่มเครื่อง  ")
+
+        box = ttk.Labelframe(tab, text=" ข้อมูลเครื่องใหม่ ", padding=24,
+                             bootstyle="info")
+        box.pack(anchor="n", pady=8)
+
+        ttk.Label(box, text="ชื่อเครื่อง").grid(row=0, column=0, sticky="e", pady=8, padx=8)
+        ttk.Entry(box, textvariable=self.new_name, width=40,
+                  font=FONT).grid(row=0, column=1, pady=8)
+
+        ttk.Label(box, text="แพลตฟอร์ม").grid(row=1, column=0, sticky="e", pady=8, padx=8)
+        ttk.Combobox(box, textvariable=self.new_platform, values=PLATFORMS,
+                     width=38, font=FONT).grid(row=1, column=1, pady=8)
+
+        ttk.Label(box, text="ราคา/วัน (บาท)").grid(row=2, column=0, sticky="e", pady=8, padx=8)
+        ttk.Entry(box, textvariable=self.new_rate, width=14,
+                  font=FONT).grid(row=2, column=1, sticky="w", pady=8)
+
+        ttk.Button(box, text="เพิ่มเครื่อง", bootstyle="info", width=24,
+                   command=self.on_add_console).grid(row=3, column=0, columnspan=2,
+                                                     pady=(16, 0))
+
+    def on_add_console(self):
+        ok, message = logic.add_console(self.new_name.get().strip(),
+                                        self.new_platform.get().strip(),
+                                        self.new_rate.get().strip())
+        if ok:
+            messagebox.showinfo("สำเร็จ", message)
+            self.new_name.set("")
+            self.new_platform.set("")
+            self.new_rate.set("")
+            self.notebook.select(0)   # กลับไปแท็บรายการเครื่อง (จะรีเฟรชเอง)
+            self.refresh_all()
+        else:
+            messagebox.showerror("ไม่สำเร็จ", message)
 
     # ---------- โหลดข้อมูลใหม่ ----------
     def refresh_all(self):
