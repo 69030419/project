@@ -21,7 +21,7 @@
    ```
 2. ติดตั้งไลบรารี
    ```
-   pip install psycopg2-binary
+   pip install psycopg2-binary ttkbootstrap
    ```
 3. สร้างไฟล์ `db_config.py` (คัดลอกจาก `db_config.example.py`) แล้วใส่รหัสผ่านของตัวเอง
    ```python
