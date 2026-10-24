@@ -116,6 +116,10 @@ return_console(rental_id) -> tuple[bool, str]
     # เกิน due_date: ค่าปรับ = daily_rate * 0.5 ต่อวันที่เกิน
     # close_rental -> set_console_status('available')
 
+add_console(name, platform, daily_rate) -> tuple[bool, str]
+    # ชื่อ/แพลตฟอร์มไม่ว่าง / ราคา > 0 / ชื่อเครื่องห้ามซ้ำ -> insert_console
+    # หมายเหตุ: UI ส่งค่ามาเป็น string (เช่น daily_rate="200") logic ต้องแปลงและตรวจเอง
+
 get_all_consoles() -> list[dict]
 get_available_consoles() -> list[dict]
 get_all_rentals() -> list[dict]
@@ -124,7 +128,8 @@ get_all_rentals() -> list[dict]
 ฟังก์ชันที่คืน `(ok, message)`: `ok=False` แปลว่าทำไม่สำเร็จ และ `message` เป็นข้อความภาษาไทยพร้อมแสดงใน `messagebox` ได้ทันที
 
 ### `ui.py` (Suthinun)
-เรียกเฉพาะฟังก์ชันใน `logic.py` ข้างบน แท็บ: รายการเครื่อง / เช่าเครื่อง / คืนเครื่อง / ประวัติการเช่า
+เรียกเฉพาะฟังก์ชันใน `logic.py` ข้างบน แท็บ: รายการเครื่อง / เช่าเครื่อง / คืนเครื่อง / ประวัติการเช่า / เพิ่มเครื่อง
+(ค่าที่ผู้ใช้กรอก เช่น `days`, `daily_rate` UI ส่งเป็น string ให้ `logic.py` แปลงเอง)
 
 ## ขั้นตอนทำงาน (Git)
 
