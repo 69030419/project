@@ -2,6 +2,7 @@
 กฎ: ไฟล์นี้เรียกได้เฉพาะ logic.py เท่านั้น (ห้าม import database)
 ติดตั้ง: pip install ttkbootstrap
 """
+import os
 import tkinter as tk
 from datetime import date
 from tkinter import messagebox
@@ -68,6 +69,7 @@ class App(ttk.Window):
         self.title("ร้านเช่าเครื่องเกม")
         self.geometry("980x620")
         self.minsize(860, 540)
+        self.set_app_icon()
 
         self.available_map = {}   # ข้อความใน combobox -> console_id
         self.rate_map = {}        # console_id -> ราคา/วัน (ใช้โชว์ราคาโดยประมาณ)
@@ -100,6 +102,21 @@ class App(ttk.Window):
         self.refresh_all()
 
     # ---------- สไตล์ / หัวเรื่อง ----------
+    def set_app_icon(self):
+        """ตั้งค่าไอคอนหน้าต่าง (รองรับทั้ง icon.png และ icon.ico ในโฟลเดอร์เดียวกัน)"""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        png_path = os.path.join(base_dir, "icon.png")
+        ico_path = os.path.join(base_dir, "icon.ico")
+
+        try:
+            if os.path.exists(png_path):
+                self._icon_img = tk.PhotoImage(file=png_path)
+                self.iconphoto(False, self._icon_img)
+            elif os.path.exists(ico_path):
+                self.iconbitmap(ico_path)
+        except Exception:
+            pass  # ถ้าไม่มีไฟล์หรือโหลดไม่ได้ ให้ใช้ไอคอนเริ่มต้นของระบบ
+
     def apply_style(self):
         self.style.configure(".", font=FONT)
         self.style.configure("Treeview", font=FONT, rowheight=34)
