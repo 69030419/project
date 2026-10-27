@@ -122,10 +122,12 @@ fetch_rental(rental_id) -> dict | None
 close_rental(rental_id, return_date, total_price) -> None
 request_rental_return(rental_id) -> bool
 complete_rental_return(rental_id, console_id, return_date, total_price) -> bool
+create_rental_transaction(console_id, customer_name, phone, rent_date, due_date) -> int | None
 ```
 
 ทุกฟังก์ชันเปิด connection ผ่าน `psycopg2` ด้วยค่าใน `db_config.py`, `commit()` เมื่อสำเร็จ และปิด connection เสมอ
 เมื่อเปิดแอป ระบบเพิ่มคอลัมน์ `return_requested_at` ให้ฐานข้อมูลเดิมอัตโนมัติ
+การเช่าจะล็อกแถวเครื่องและบันทึกลูกค้า/รายการเช่า/สถานะเครื่องใน transaction เดียว
 การยืนยันคืนจะปิดรายการเช่าและเปลี่ยนสถานะเครื่องเป็นว่างใน transaction เดียว
 
 ### `logic.py` (Ariyawong)
@@ -145,12 +147,12 @@ validate_rental(console_id, customer_name, phone, days) -> tuple[bool, str]
     # ชื่อไม่ว่าง / เบอร์ 10 หลักตัวเลข / days เป็นจำนวนเต็ม 1-30 / เครื่องต้อง available
 
 add_rental(console_id, customer_name, phone, days) -> tuple[bool, str]
-    # validate -> find_or_create_customer -> insert_rental -> set_console_status('rented')
+    # validate -> database.create_rental_transaction (ล็อกเครื่องและบันทึกแบบ atomic)
 
 return_console(rental_id) -> tuple[bool, str]
     # คิดราคา = daily_rate * วันที่เช่าจริง (ขั้นต่ำ 1 วัน)
     # เกิน due_date: ค่าปรับ = daily_rate * 0.5 ต่อวันที่เกิน
-    # close_rental -> set_console_status('available')
+    # complete_rental_return ปิดรายการและคืนสถานะเครื่องเป็นว่างแบบ atomic
 
 # ---- สำหรับโหมดลูกค้า/พนักงาน ----
 get_rentals_by_phone(phone) -> list[dict]
