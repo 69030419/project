@@ -105,6 +105,7 @@ class App(ttk.Window):
         self.minsize(940, 620)
         self.set_app_icon()
         self.mode = None
+        self.database_error_shown = False
 
         self.available_map = {}   # ข้อความใน combobox -> console_id
         self.rate_map = {}        # console_id -> ราคา/วัน (ใช้โชว์ราคาโดยประมาณ)
@@ -328,7 +329,7 @@ class App(ttk.Window):
         ttk.Entry(controls, textvariable=self.customer_lookup_phone,
                   width=20, font=FONT).pack(side=LEFT)
         ttk.Button(controls, text="ค้นหา", bootstyle="primary-outline",
-                   command=self.refresh_customer_rentals).pack(side=LEFT, padx=8)
+                   command=self.refresh_all).pack(side=LEFT, padx=8)
         ttk.Button(controls, text="แจ้งขอคืนเครื่อง", bootstyle="success",
                    command=self.on_customer_return).pack(side=RIGHT)
         self.customer_rentals_tree = make_tree(tab, [
@@ -554,10 +555,19 @@ class App(ttk.Window):
 
     # ---------- โหลดข้อมูลใหม่ ----------
     def refresh_all(self):
-        if self.mode == "customer":
-            self.refresh_customer_data()
-        elif self.mode == "staff":
-            self.refresh_staff_data()
+        try:
+            if self.mode == "customer":
+                self.refresh_customer_data()
+            elif self.mode == "staff":
+                self.refresh_staff_data()
+            self.database_error_shown = False
+        except Exception:
+            if not self.database_error_shown:
+                messagebox.showerror(
+                    "ฐานข้อมูลไม่พร้อมใช้งาน",
+                    "เชื่อมต่อฐานข้อมูลไม่ได้ กรุณาตรวจสอบว่า PostgreSQL เปิดอยู่ "
+                    "และตั้งค่า db_config.py ถูกต้อง")
+                self.database_error_shown = True
 
     def refresh_customer_data(self):
         available = logic.get_available_consoles()
