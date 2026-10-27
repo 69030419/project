@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS rentals (
     rent_date    DATE NOT NULL,
     due_date     DATE NOT NULL CHECK (due_date >= rent_date),
     return_date  DATE,
+    return_requested_at TIMESTAMP,
     total_price  NUMERIC(10,2) NOT NULL DEFAULT 0
 );
 """
@@ -58,7 +59,7 @@ CREATE TABLE IF NOT EXISTS rentals (
 RENTAL_SELECT = """
 SELECT r.rental_id, r.console_id, c.name AS console_name, c.daily_rate,
        cu.name AS customer_name, cu.phone,
-       r.rent_date, r.due_date, r.return_date, r.total_price
+    r.rent_date, r.due_date, r.return_date, r.return_requested_at, r.total_price
 FROM rentals r
 JOIN consoles  c  ON c.console_id  = r.console_id
 JOIN customers cu ON cu.customer_id = r.customer_id
@@ -111,6 +112,8 @@ def _ensure_tables():
         with conn:
             with conn.cursor() as cur:
                 cur.execute(SCHEMA_SQL)
+                cur.execute(
+                    "ALTER TABLE rentals ADD COLUMN IF NOT EXISTS return_requested_at TIMESTAMP")
                 if SEED_SAMPLE_CONSOLES:
                     cur.execute("SELECT COUNT(*) FROM consoles")
                     if cur.fetchone()[0] == 0:
@@ -175,6 +178,32 @@ def insert_rental(console_id, customer_id, rent_date, due_date):
         return cur.fetchone()["rental_id"]
 
 
+def create_rental_transaction(console_id, customer_name, phone, rent_date, due_date):
+    with _cursor() as cur:
+        cur.execute("SELECT status FROM consoles WHERE console_id = %s FOR UPDATE",
+                    (console_id,))
+        console = cur.fetchone()
+        if console is None or console["status"] != "available":
+            return None
+
+        cur.execute(
+            "INSERT INTO customers (name, phone) VALUES (%s, %s) "
+            "ON CONFLICT (phone) DO UPDATE SET name = customers.name "
+            "RETURNING customer_id", (customer_name, phone))
+        customer_id = cur.fetchone()["customer_id"]
+        cur.execute(
+            "INSERT INTO rentals (console_id, customer_id, rent_date, due_date) "
+            "VALUES (%s, %s, %s, %s) RETURNING rental_id",
+            (console_id, customer_id, rent_date, due_date))
+        rental_id = cur.fetchone()["rental_id"]
+        cur.execute(
+            "UPDATE consoles SET status = 'rented' "
+            "WHERE console_id = %s AND status = 'available'", (console_id,))
+        if cur.rowcount != 1:
+            raise RuntimeError("สถานะเครื่องเปลี่ยนระหว่างทำรายการเช่า")
+        return rental_id
+
+
 def fetch_all_rentals():
     with _cursor() as cur:
         cur.execute(RENTAL_SELECT + " ORDER BY r.rental_id DESC")
@@ -192,3 +221,31 @@ def close_rental(rental_id, return_date, total_price):
         cur.execute(
             "UPDATE rentals SET return_date = %s, total_price = %s WHERE rental_id = %s",
             (return_date, total_price, rental_id))
+
+
+def request_rental_return(rental_id):
+    with _cursor() as cur:
+        cur.execute(
+            "UPDATE rentals SET return_requested_at = CURRENT_TIMESTAMP "
+            "WHERE rental_id = %s AND return_date IS NULL "
+            "AND return_requested_at IS NULL RETURNING rental_id",
+            (rental_id,))
+        return cur.fetchone() is not None
+
+
+def complete_rental_return(rental_id, console_id, return_date, total_price):
+    with _cursor() as cur:
+        cur.execute(
+            "UPDATE rentals SET return_date = %s, total_price = %s "
+            "WHERE rental_id = %s AND console_id = %s AND return_date IS NULL "
+            "RETURNING rental_id",
+            (return_date, total_price, rental_id, console_id))
+        if cur.fetchone() is None:
+            return False
+        cur.execute(
+            "UPDATE consoles SET status = 'available' "
+            "WHERE console_id = %s AND status = 'rented'",
+            (console_id,))
+        if cur.rowcount != 1:
+            raise RuntimeError("สถานะเครื่องไม่ตรงกับรายการเช่า")
+        return True
