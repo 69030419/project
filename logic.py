@@ -6,6 +6,7 @@ ui.py เรียกฟังก์ชันในไฟล์นี้เท�
 ที่ UI เอาไปแสดงใน messagebox ได้ทันที
 """
 import functools
+import math
 from datetime import date, timedelta
 
 import database
@@ -16,6 +17,7 @@ MAX_DAYS = 30
 PHONE_LENGTH = 10
 LATE_FEE_RATE = 0.5      # ค่าปรับต่อวันที่เกินกำหนด = ราคาต่อวัน x ค่านี้
 MIN_CHARGE_DAYS = 1      # คิดเงินขั้นต่ำกี่วัน
+STAFF_PIN = "1234"
 
 
 def _safe(func):
@@ -42,6 +44,33 @@ def get_all_rentals():
     return database.fetch_all_rentals()
 
 
+def get_rentals_by_phone(phone):
+    phone = (phone or "").strip()
+    return [rental for rental in database.fetch_all_rentals()
+            if rental["phone"] == phone]
+
+
+@_safe
+def request_my_return(rental_id, phone):
+    phone = (phone or "").strip()
+    if not (phone.isdigit() and len(phone) == PHONE_LENGTH):
+        return False, f"เบอร์โทรต้องเป็นตัวเลข {PHONE_LENGTH} หลัก"
+    rental = database.fetch_rental(rental_id)
+    if rental is None or rental["phone"] != phone:
+        return False, "ไม่พบรายการเช่าของเบอร์โทรนี้"
+    if rental["return_date"] is not None:
+        return False, "รายการนี้คืนเครื่องไปแล้ว"
+    if rental["return_requested_at"] is not None:
+        return False, "ส่งคำขอคืนรายการนี้ไปแล้ว กรุณานำเครื่องให้พนักงานตรวจรับ"
+    if not database.request_rental_return(rental_id):
+        return False, "ไม่สามารถส่งคำขอคืนได้ กรุณารีเฟรชรายการแล้วลองอีกครั้ง"
+    return True, "ส่งคำขอคืนแล้ว กรุณานำเครื่องให้พนักงานตรวจรับ"
+
+
+def check_staff_pin(pin):
+    return pin == STAFF_PIN
+
+
 # ---------- เพิ่มเครื่อง ----------
 @_safe
 def add_console(name, platform, daily_rate):
@@ -56,6 +85,8 @@ def add_console(name, platform, daily_rate):
         rate = float(daily_rate)
     except (TypeError, ValueError):
         return False, "ราคาต่อวันต้องเป็นตัวเลข"
+    if not math.isfinite(rate):
+        return False, "ราคาต่อวันต้องเป็นตัวเลขปกติ"
     if rate <= 0:
         return False, "ราคาต่อวันต้องมากกว่า 0"
     if any(c["name"].lower() == name.lower() for c in database.fetch_all_consoles()):
@@ -98,11 +129,12 @@ def add_rental(console_id, customer_name, phone, days):
     days = int(days)
     console = database.fetch_console(console_id)
 
-    customer_id = database.find_or_create_customer(customer_name, phone)
     today = date.today()
     due = today + timedelta(days=days)
-    database.insert_rental(console_id, customer_id, today.isoformat(), due.isoformat())
-    database.set_console_status(console_id, "rented")
+    rental_id = database.create_rental_transaction(
+        console_id, customer_name, phone, today.isoformat(), due.isoformat())
+    if rental_id is None:
+        return False, "เครื่องนี้ไม่ว่างแล้ว กรุณารีเฟรชรายการเครื่อง"
 
     estimate = console["daily_rate"] * days
     return True, (f"เช่า {console['name']} เป็นเวลา {days} วัน เรียบร้อย\n"
@@ -134,8 +166,9 @@ def return_console(rental_id):
         date.fromisoformat(rental["due_date"]),
         today,
     )
-    database.close_rental(rental_id, today.isoformat(), total)
-    database.set_console_status(rental["console_id"], "available")
+    if not database.complete_rental_return(
+            rental_id, rental["console_id"], today.isoformat(), total):
+        return False, "รายการนี้ถูกคืนไปแล้ว หรือสถานะเครื่องไม่ถูกต้อง"
 
     message = f"คืน {rental['console_name']} เรียบร้อย\nใช้งาน {used_days} วัน"
     if late_days:
