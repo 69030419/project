@@ -1,6 +1,6 @@
 # ระบบร้านเช่าเครื่องเกม (Game Console Rental)
 
-แอปเดสก์ท็อปด้วย Python + Tkinter (ttkbootstrap) + PostgreSQL สำหรับร้านให้เช่าเครื่องเกม
+แอปเดสก์ท็อปด้วย Python + Flet + PostgreSQL สำหรับร้านให้เช่าเครื่องเกม
 (โปรเจกต์วิชาเขียนโปรแกรม + วิชาฐานข้อมูล)
 
 แอปมี 2 โหมดในโปรแกรมเดียว ใช้ฐานข้อมูลและ `logic.py` ชุดเดียวกัน:
@@ -17,7 +17,7 @@
 
 | ไฟล์ | ผู้รับผิดชอบ | Branch | หน้าที่ |
 |------|-------------|--------|---------|
-| `ui.py` | Suthinun | `feature/suthinun-ui` | หน้าจอ Tkinter เรียกได้เฉพาะ `logic.py` |
+| `ui_flet.py` | Suthinun | `feature/suthinun-ui` | หน้าจอ Flet สำหรับ desktop เรียกได้เฉพาะ `logic.py` |
 | `logic.py` | Ariyawong | `feature/Ariyawong` | ตรวจสอบข้อมูล คิดราคา/ค่าปรับ เรียกได้เฉพาะ `database.py` |
 | `database.py` | Kitthin | `feature/kitthin` | PostgreSQL เก็บ/ดึงข้อมูลอย่างเดียว ไม่มีกฎธุรกิจ |
 
@@ -32,7 +32,7 @@
    หรือสร้างใน pgAdmin: คลิกขวา Databases → Create → Database...
 2. ติดตั้งไลบรารี (ลงใน `.venv` ถ้าใช้)
    ```
-   pip install psycopg2-binary ttkbootstrap
+    pip install psycopg2-binary flet flet-desktop ttkbootstrap
    ```
 3. สร้างไฟล์ `db_config.py` ในโฟลเดอร์โปรเจกต์ (ไฟล์ใหม่ ไม่มีใน repo) วางโค้ดนี้แล้วแก้รหัสผ่านเป็นของ PostgreSQL ในเครื่องตัวเอง
    ```python
@@ -50,8 +50,7 @@
 ### หมายเหตุสำหรับ macOS
 - ใช้ `python3` และ `pip3` แทน `python` / `pip`
 - PostgreSQL ที่ลงด้วย Postgres.app หรือ Homebrew มักไม่มีรหัสผ่าน และ user คือชื่อบัญชีเครื่อง ให้แก้ `"user"` เป็นชื่อนั้น และตั้ง `"password": ""`
-- ถ้า Tkinter ขึ้น `No module named '_tkinter'` ให้ติดตั้ง Python จาก python.org หรือ `brew install python-tk`
-- ฟอนต์ Leelawadee UI ไม่มีบน Mac ระบบจะใช้ฟอนต์อื่นแทน
+- รัน Flet desktop ด้วย `python3 ui_flet.py`
 
 ## โครงสร้างฐานข้อมูล
 
@@ -168,8 +167,8 @@ check_staff_pin(pin) -> bool
 ค่าที่ร้านกำหนด (แก้ที่หัวไฟล์ `logic.py` ที่เดียว): เช่า 1-30 วัน, เบอร์โทร 10 หลัก,
 ค่าปรับเกินกำหนด = ครึ่งหนึ่งของราคา/วัน, ขั้นต่ำคิดเงิน 1 วัน
 
-### `ui.py` (Suthinun)
-เรียกเฉพาะฟังก์ชันใน `logic.py` ข้างบน
+### `ui_flet.py` (Suthinun)
+หน้าจอหลักสำหรับ desktop ใช้ Flet และเรียกเฉพาะฟังก์ชันใน `logic.py` ข้างบน; `ui.py` เดิมยังเก็บไว้เป็น Tkinter fallback
 
 - **ธีมหน้าจอ**: เปิดแอปด้วยธีมมืดเป็นค่าเริ่มต้น และกดปุ่มบนแถบด้านบนเพื่อสลับเป็นธีมสว่างได้
 - **โหมดพนักงาน** (มีแล้ว): รายการเครื่อง / เช่าเครื่อง / ตรวจรับและยืนยันคืน / ประวัติการเช่า / เพิ่มเครื่อง
@@ -191,5 +190,7 @@ check_staff_pin(pin) -> bool
 ## รัน
 
 ```
-python ui.py        # macOS ใช้ python3 ui.py
+python ui_flet.py        # macOS ใช้ python3 ui_flet.py
 ```
+
+หากต้องการเปิดหน้าจอ Tkinter เดิม ให้รัน `python ui.py`
