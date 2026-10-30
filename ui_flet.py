@@ -239,6 +239,7 @@ class RentalApp:
                 (ft.Icons.ASSIGNMENT_RETURN, "คืนเครื่อง"),
                 (ft.Icons.HISTORY, "ประวัติ"),
                 (ft.Icons.ADD, "เพิ่มเครื่อง"),
+                (ft.Icons.EXTENSION, "อุปกรณ์เสริม"),
             ]
         return [ft.NavigationRailDestination(icon=icon, label=label) for icon, label in items]
 
@@ -264,7 +265,8 @@ class RentalApp:
             return [self.customer_available_view, self.customer_rent_view,
                     self.customer_rentals_view][self.view_index]()
         return [self.staff_consoles_view, self.staff_rent_view, self.staff_returns_view,
-                self.staff_history_view, self.staff_add_console_view][self.view_index]()
+            self.staff_history_view, self.staff_add_console_view,
+            self.staff_accessories_view][self.view_index]()
 
     def page_heading(self, title, subtitle, refresh=True):
         controls = [
@@ -412,6 +414,14 @@ class RentalApp:
 
     def rent_form(self, customer):
         self.available_consoles = logic.get_available_consoles()
+        self.available_accessories = [
+            item for item in logic.get_all_accessories()
+            if item["active"] and item["quantity_available"] > 0
+        ]
+        self.accessory_by_id = {
+            item["accessory_id"]: item for item in self.available_accessories
+        }
+        self.rent_accessory_fields = []
         self.rate_by_id = {console["console_id"]: console["daily_rate"]
                            for console in self.available_consoles}
         self.console_by_id = {console["console_id"]: console
@@ -456,6 +466,26 @@ class RentalApp:
             self.staff_estimate = ft.Text("ราคาโดยประมาณ: -", size=17,
                                           weight=ft.FontWeight.BOLD, color=WARN)
 
+        accessory_rows = []
+        for accessory in self.available_accessories:
+            selected = ft.Checkbox(
+                label=(f"{accessory['name']} · {accessory['daily_rate']:,.0f} บาท/วัน "
+                       f"(เหลือ {accessory['quantity_available']})"),
+                on_change=self.update_rent_estimate,
+            )
+            quantity = ft.TextField(
+                value="1",
+                width=90,
+                label="จำนวน",
+                keyboard_type=ft.KeyboardType.NUMBER,
+                on_change=self.update_rent_estimate,
+            )
+            self.rent_accessory_fields.append(
+                (accessory["accessory_id"], selected, quantity))
+            accessory_rows.append(
+                ft.Row([selected, quantity], spacing=12,
+                       vertical_alignment=ft.CrossAxisAlignment.CENTER))
+
         if not options:
             return ft.Column(
                 [self.page_heading("เช่าเครื่อง", "ทำรายการเช่าให้ลูกค้า"),
@@ -480,6 +510,15 @@ class RentalApp:
                             phone_field,
                             ft.Row([days_field, estimate], spacing=24,
                                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                            self.section(
+                                ft.Column(
+                                    [ft.Text("อุปกรณ์เสริม (ไม่บังคับ)", weight=ft.FontWeight.BOLD),
+                                     *(accessory_rows or [ft.Text("ไม่มีอุปกรณ์เสริมพร้อมให้เช่า",
+                                                                   color=MUTED)])],
+                                    spacing=8,
+                                ),
+                                padding=18,
+                            ),
                             ft.FilledButton(
                                 "ยืนยันการเช่า",
                                 icon=ft.Icons.CHECK,
@@ -511,7 +550,18 @@ class RentalApp:
         except (TypeError, ValueError, KeyError):
             estimate.value = "ราคาโดยประมาณ: -"
         else:
-            estimate.value = f"ราคาโดยประมาณ: {rate * days:,.0f} บาท"
+            accessory_total = 0
+            try:
+                for accessory_id, selected, quantity in self.rent_accessory_fields:
+                    if selected.value:
+                        accessory_total += (
+                            self.accessory_by_id[accessory_id]["daily_rate"]
+                            * int(quantity.value) * days
+                        )
+            except (TypeError, ValueError):
+                estimate.value = "ตรวจสอบจำนวนอุปกรณ์เสริม"
+            else:
+                estimate.value = f"ราคาโดยประมาณ: {rate * days + accessory_total:,.0f} บาท"
         if estimate.page is not None:
             estimate.update()
 
@@ -525,11 +575,17 @@ class RentalApp:
         except (TypeError, ValueError):
             self.show_message("กรุณาเลือกเครื่องก่อน", error=True)
             return
+        accessories = [
+            {"accessory_id": accessory_id, "quantity": quantity.value}
+            for accessory_id, selected, quantity in self.rent_accessory_fields
+            if selected.value
+        ]
         ok, message = logic.add_rental(
             console_id,
             name_field.value.strip(),
             phone_field.value.strip(),
             days_field.value.strip(),
+            accessories=accessories,
         )
         if not ok:
             self.show_message(message, error=True)
@@ -566,7 +622,7 @@ class RentalApp:
             ),
         ]
         if rentals:
-            columns = ["รหัสเช่า", "เครื่อง", "วันที่เช่า", "กำหนดคืน", "สถานะ"]
+            columns = ["รหัสเช่า", "เครื่อง", "อุปกรณ์เสริม", "วันที่เช่า", "กำหนดคืน", "สถานะ"]
             rows = []
             for rental in rentals:
                 rows.append(
@@ -577,6 +633,7 @@ class RentalApp:
                         cells=[
                             ft.DataCell(ft.Text(str(rental["rental_id"]))),
                             ft.DataCell(ft.Text(rental["console_name"])),
+                            ft.DataCell(ft.Text(rental.get("accessory_summary") or "-")),
                             ft.DataCell(ft.Text(rental["rent_date"])),
                             ft.DataCell(ft.Text(rental["due_date"])),
                             ft.DataCell(ft.Text(rental["return_status"])),
@@ -661,6 +718,7 @@ class RentalApp:
                         cells=[
                             ft.DataCell(ft.Text(str(rental["rental_id"]), color=color)),
                             ft.DataCell(ft.Text(rental["console_name"], color=color)),
+                            ft.DataCell(ft.Text(rental.get("accessory_summary") or "-", color=color)),
                             ft.DataCell(ft.Text(rental["customer_name"], color=color)),
                             ft.DataCell(ft.Text(rental["phone"], color=color)),
                             ft.DataCell(ft.Text(rental["due_date"], color=color)),
@@ -674,7 +732,8 @@ class RentalApp:
                         [
                             self.data_table(
                                 [ft.DataColumn(ft.Text(label)) for label in
-                                 ("รหัสเช่า", "เครื่อง", "ลูกค้า", "เบอร์โทร", "กำหนดคืน", "สถานะ")],
+                                 ("รหัสเช่า", "เครื่อง", "อุปกรณ์เสริม", "ลูกค้า", "เบอร์โทร",
+                                  "กำหนดคืน", "สถานะ")],
                                 rows,
                                 selectable=True,
                             ),
@@ -724,12 +783,14 @@ class RentalApp:
             )
         table = self.data_table(
             [ft.DataColumn(ft.Text(label)) for label in
-             ("รหัส", "เครื่อง", "ลูกค้า", "เบอร์โทร", "เช่า", "กำหนดคืน", "คืนจริง", "ยอดรวม")],
+                 ("รหัส", "เครื่อง", "อุปกรณ์เสริม", "ลูกค้า", "เบอร์โทร", "เช่า",
+                  "กำหนดคืน", "คืนจริง", "ยอดรวม")],
             [
                 ft.DataRow(
                     cells=[
                         ft.DataCell(ft.Text(str(rental["rental_id"]))),
                         ft.DataCell(ft.Text(rental["console_name"])),
+                        ft.DataCell(ft.Text(rental.get("accessory_summary") or "-")),
                         ft.DataCell(ft.Text(rental["customer_name"])),
                         ft.DataCell(ft.Text(rental["phone"])),
                         ft.DataCell(ft.Text(rental["rent_date"])),
@@ -794,6 +855,70 @@ class RentalApp:
         if ok:
             self.view_index = 0
             self.render()
+
+    def staff_accessories_view(self):
+        accessories = logic.get_all_accessories()
+        self.new_accessory_name = ft.TextField(label="ชื่ออุปกรณ์", width=520)
+        self.new_accessory_rate = ft.TextField(
+            label="ราคาเช่าต่อวัน (บาท, ใส่ 0 หากไม่คิดเงิน)",
+            value="0",
+            width=300,
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
+        self.new_accessory_quantity = ft.TextField(
+            label="จำนวนทั้งหมด",
+            width=180,
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
+        content = [
+            self.page_heading("จัดการอุปกรณ์เสริม", "เพิ่มอุปกรณ์และตรวจสอบจำนวนที่พร้อมให้เช่า"),
+        ]
+        if accessories:
+            rows = [
+                ft.DataRow(cells=[
+                    ft.DataCell(ft.Text(str(item["accessory_id"]))),
+                    ft.DataCell(ft.Text(item["name"])),
+                    ft.DataCell(ft.Text(f"{item['daily_rate']:,.0f} บาท")),
+                    ft.DataCell(ft.Text(str(item["quantity_total"]))),
+                    ft.DataCell(ft.Text(str(item["quantity_available"]))),
+                    ft.DataCell(ft.Text("ใช้งาน" if item["active"] else "ปิดใช้งาน")),
+                ])
+                for item in accessories
+            ]
+            content.append(self.section(self.data_table(
+                [ft.DataColumn(ft.Text(label)) for label in
+                 ("รหัส", "อุปกรณ์", "ราคา/วัน", "ทั้งหมด", "พร้อมให้เช่า", "สถานะ")],
+                rows,
+            )))
+        else:
+            content.append(self.empty_state("ยังไม่มีอุปกรณ์เสริมในระบบ"))
+        content.append(
+            self.section(
+                ft.Column(
+                    [
+                        ft.Text("เพิ่มอุปกรณ์", size=17, weight=ft.FontWeight.BOLD, color=INK),
+                        self.new_accessory_name,
+                        ft.Row([self.new_accessory_rate, self.new_accessory_quantity], spacing=14),
+                        ft.FilledButton("เพิ่มอุปกรณ์", icon=ft.Icons.ADD,
+                                        on_click=self.submit_new_accessory),
+                    ],
+                    spacing=16,
+                    width=600,
+                ),
+                padding=24,
+            )
+        )
+        return ft.Column(content, spacing=18, scroll=ft.ScrollMode.AUTO, expand=True)
+
+    def submit_new_accessory(self):
+        ok, message = logic.add_accessory(
+            self.new_accessory_name.value,
+            self.new_accessory_rate.value,
+            self.new_accessory_quantity.value,
+        )
+        self.show_message(message, error=not ok)
+        if ok:
+            self.render_view()
 
     def confirm(self, title, message, action):
         def close_dialog():
