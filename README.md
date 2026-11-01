@@ -1,196 +1,144 @@
 # ระบบร้านเช่าเครื่องเกม (Game Console Rental)
 
-แอปเดสก์ท็อปด้วย Python + Flet + PostgreSQL สำหรับร้านให้เช่าเครื่องเกม
-(โปรเจกต์วิชาเขียนโปรแกรม + วิชาฐานข้อมูล)
+แอปเดสก์ท็อปสำหรับร้านเช่าเครื่องเกม ใช้ Python, Flet และ PostgreSQL
 
-แอปมี 2 โหมดในโปรแกรมเดียว ใช้ฐานข้อมูลและ `logic.py` ชุดเดียวกัน:
+## ฟีเจอร์ปัจจุบัน
 
-| โหมด | ใช้โดย | ทำอะไรได้ |
-|------|--------|-----------|
-| **ลูกค้า** | ลูกค้าที่หน้าร้าน | ดูเครื่องว่าง / เช่าเครื่อง / ดูรายการและส่งคำขอคืน (ยืนยันตัวด้วยเบอร์โทร) |
-| **พนักงาน** | พนักงานร้าน (ใส่ PIN) | ดูทุกเครื่อง / เช่า / คืน / ประวัติทั้งหมด / เพิ่มเครื่อง |
+แอป desktop นี้ออกแบบให้พนักงานใช้ที่หน้าร้าน ต้องใส่ PIN ก่อนเข้าหน้าจัดการ โดยพนักงานสามารถ:
 
-> สถานะ: โหมดพนักงานและโหมดลูกค้าใช้งานได้แล้ว
-> PIN พนักงานเริ่มต้นคือ `1234` (เปลี่ยนได้ที่ `STAFF_PIN` ใน `logic.py`)
+- ดูรายการและสถานะเครื่อง
+- ทำรายการเช่าโดยกรอกชื่อลูกค้าและเบอร์โทร
+- เลือกอุปกรณ์เสริมที่ตรงกับแพลตฟอร์มของเครื่อง
+- ตรวจรับและยืนยันคืนเครื่อง
+- ดูประวัติการเช่า
+- เพิ่มเครื่องและจัดการสต็อกอุปกรณ์เสริม
+- เปิดงานซ่อม บันทึกค่าซ่อม และปิดงานเมื่อเครื่องพร้อมให้เช่าอีกครั้ง
 
-## แบ่งงาน
+เวอร์ชันนี้ไม่มีหน้าจอให้ลูกค้าใช้งานเอง ข้อมูลลูกค้ายังคงถูกบันทึกใน `customers` และเชื่อมกับรายการเช่า
 
-| ไฟล์ | ผู้รับผิดชอบ | Branch | หน้าที่ |
-|------|-------------|--------|---------|
-| `ui_flet.py` | Suthinun | `feature/suthinun-ui` | หน้าจอ Flet สำหรับ desktop เรียกได้เฉพาะ `logic.py` |
-| `logic.py` | Ariyawong | `feature/Ariyawong` | ตรวจสอบข้อมูล คิดราคา/ค่าปรับ เรียกได้เฉพาะ `database.py` |
-| `database.py` | Kitthin | `feature/kitthin` | PostgreSQL เก็บ/ดึงข้อมูลอย่างเดียว ไม่มีกฎธุรกิจ |
+อุปกรณ์เสริมมีแพลตฟอร์ม ราคาเช่าต่อวัน และจำนวนคงเหลือ ระบบกรองอุปกรณ์ตามแพลตฟอร์มของเครื่อง และบันทึกอุปกรณ์ที่เช่าไว้กับรายการเช่า
 
-กฎสำคัญ: **ui → logic → database** (ห้ามข้ามชั้น)
+**ข้อมูลตัวอย่าง:** เมื่อตารางเครื่องหรืออุปกรณ์ยังว่าง ระบบอาจเพิ่มรายการตัวอย่างให้อัตโนมัติ จำนวนและราคาของอุปกรณ์ตัวอย่างเป็นเพียงค่าเริ่มต้น ต้องตรวจและแก้ให้ตรงกับสต็อกจริงก่อนเปิดให้เช่า
 
-## ติดตั้งและตั้งค่า (ทุกคนทำในเครื่องตัวเอง)
+## โครงสร้างโปรเจกต์
 
-1. ติดตั้ง PostgreSQL (มาพร้อม pgAdmin 4) แล้วสร้างฐานข้อมูลชื่อ `game_rental`
+- `ui_flet.py` แสดงหน้าจอ desktop และเรียก `logic.py`
+- `logic.py` ตรวจข้อมูล คำนวณราคา และเรียก `database.py`
+- `database.py` สร้าง schema และอ่าน/เขียน PostgreSQL
+
+กฎการเรียกใช้: **UI → logic → database** ห้าม UI เรียกฐานข้อมูลโดยตรง
+
+## ติดตั้งและตั้งค่า
+
+1. ติดตั้ง Python และ PostgreSQL แล้วสร้างฐานข้อมูล เช่น `game_rental`:
+
    ```sql
    CREATE DATABASE game_rental;
    ```
-   หรือสร้างใน pgAdmin: คลิกขวา Databases → Create → Database...
-2. ติดตั้งไลบรารี (ลงใน `.venv` ถ้าใช้)
+
+2. ติดตั้ง dependencies ใน virtual environment:
+
+   ```powershell
+   python -m pip install psycopg2-binary flet flet-desktop
    ```
-    pip install psycopg2-binary flet flet-desktop ttkbootstrap
-   ```
-3. สร้างไฟล์ `db_config.py` ในโฟลเดอร์โปรเจกต์ (ไฟล์ใหม่ ไม่มีใน repo) วางโค้ดนี้แล้วแก้รหัสผ่านเป็นของ PostgreSQL ในเครื่องตัวเอง
+
+3. สร้าง `db_config.py` ไว้ในโฟลเดอร์โปรเจกต์ โดยใช้ค่าของ PostgreSQL ในเครื่อง:
+
    ```python
    DB_CONFIG = {
        "host": "localhost",
        "port": 5432,
        "dbname": "game_rental",
        "user": "postgres",
-       "password": "ใส่รหัสผ่านของคุณ",
+       "password": "ใส่รหัสผ่านของ PostgreSQL",
    }
    ```
-4. **ห้าม commit `db_config.py`** (มีรหัสผ่าน และ repo เป็น Public) ไฟล์ `.gitignore` กันไว้แล้ว
-5. รันแอป ตารางและเครื่องตัวอย่าง 4 เครื่องจะถูกสร้างให้อัตโนมัติครั้งแรก ไม่ต้องรัน SQL เอง
 
-### หมายเหตุสำหรับ macOS
-- ใช้ `python3` และ `pip3` แทน `python` / `pip`
-- PostgreSQL ที่ลงด้วย Postgres.app หรือ Homebrew มักไม่มีรหัสผ่าน และ user คือชื่อบัญชีเครื่อง ให้แก้ `"user"` เป็นชื่อนั้น และตั้ง `"password": ""`
-- รัน Flet desktop ด้วย `python3 ui_flet.py`
+4. รันแอปจากโฟลเดอร์โปรเจกต์:
 
-## โครงสร้างฐานข้อมูล
+   ```powershell
+   python ui_flet.py
+   ```
 
-```sql
-CREATE TABLE IF NOT EXISTS consoles (
-    console_id  SERIAL PRIMARY KEY,
-    name        VARCHAR(100)  NOT NULL,                -- เช่น 'PS5 #1'
-    platform    VARCHAR(50)   NOT NULL,                -- PS5 / Switch / Xbox ...
-    daily_rate  NUMERIC(10,2) NOT NULL CHECK (daily_rate > 0),
-    status      VARCHAR(20)   NOT NULL DEFAULT 'available'
-                CHECK (status IN ('available', 'rented'))
-);
+ระบบสร้างตารางและปรับ schema ที่จำเป็นให้อัตโนมัติเมื่อเชื่อมฐานข้อมูลครั้งแรก ไฟล์ `db_config.py` มีข้อมูลลับและถูก ignore โดย Git **ห้าม commit หรือ push ไฟล์นี้**
 
-CREATE TABLE IF NOT EXISTS customers (
-    customer_id SERIAL PRIMARY KEY,
-    name        VARCHAR(100) NOT NULL,
-    phone       VARCHAR(10)  NOT NULL UNIQUE
-);
+บน macOS ใช้ `python3` และ `python3 -m pip` แทน `python` และ `python -m pip`
 
-CREATE TABLE IF NOT EXISTS rentals (
-    rental_id    SERIAL PRIMARY KEY,
-    console_id   INTEGER NOT NULL REFERENCES consoles(console_id),
-    customer_id  INTEGER NOT NULL REFERENCES customers(customer_id),
-    rent_date    DATE NOT NULL,
-    due_date     DATE NOT NULL CHECK (due_date >= rent_date),
-    return_date  DATE,                                 -- NULL = ยังไม่คืน
-    return_requested_at TIMESTAMP,                     -- ลูกค้าส่งคำขอคืนแล้ว รอพนักงานตรวจรับ
-    total_price  NUMERIC(10,2) NOT NULL DEFAULT 0
-);
+## Schema ฐานข้อมูล
+
+- `consoles`: เครื่อง แพลตฟอร์ม ราคา/วัน และสถานะว่าง/ถูกเช่า/กำลังซ่อม
+- `maintenance_records`: อาการเสีย สถานะงานซ่อม ค่าซ่อม และหมายเหตุ
+- `customers`: ชื่อลูกค้าและเบอร์โทรที่ไม่ซ้ำ
+- `rentals`: รายการเช่าและวันกำหนดคืน/วันคืนจริง
+- `accessories`: อุปกรณ์ แพลตฟอร์ม ราคา/วัน และจำนวนทั้งหมด
+- `rental_accessories`: อุปกรณ์และจำนวนที่ผูกกับรายการเช่า พร้อมบันทึกราคา ณ วันที่เช่า
+
+ความสัมพันธ์หลัก:
+
+```text
+customers 1 ── N rentals N ── 1 consoles
+rentals   1 ── N rental_accessories N ── 1 accessories
+consoles  1 ── N maintenance_records
 ```
 
-ความสัมพันธ์: `customers 1 — N rentals N — 1 consoles`
-(ลูกค้า 1 คนเช่าได้หลายครั้ง เครื่อง 1 เครื่องถูกเช่าได้หลายครั้ง) ลูกค้าระบุด้วยเบอร์โทร (UNIQUE)
+สถานะเครื่องมี `available`, `rented` และ `maintenance` เครื่องที่กำลังซ่อมจะไม่ปรากฏในรายการพร้อมให้เช่า
 
-## รูปแบบข้อมูลที่ส่งข้ามไฟล์ (dict)
+ฐานข้อมูลจัดการสต็อกอุปกรณ์จากรายการเช่าที่ยังไม่คืน เมื่อปิดรายการคืนเครื่อง อุปกรณ์ในรายการเช่านั้นจะกลับมาเป็นจำนวนพร้อมให้เช่า
 
-```python
-console = {"console_id": 1, "name": "PS5 #1", "platform": "PS5",
-           "daily_rate": 200.0, "status": "available"}
+## กฎการเช่าและคืน
 
-rental = {"rental_id": 1, "console_id": 1, "console_name": "PS5 #1",
-          "daily_rate": 200.0, "customer_name": "สมชาย",
-          "phone": "0812345678", "rent_date": "2026-10-24",
-          "due_date": "2026-10-26", "return_date": None, "total_price": 400.0}
+- เช่าได้ 1-30 วัน และเบอร์โทรต้องเป็นตัวเลข 10 หลัก
+- เครื่องต้องว่าง และอุปกรณ์ต้องมีจำนวนพอและตรงกับแพลตฟอร์ม
+- การสร้างรายการเช่าจะตรวจและล็อกเครื่อง/อุปกรณ์ แล้วบันทึกลูกค้า รายการเช่า และอุปกรณ์ใน transaction เดียว
+- ค่าเช่าโดยประมาณรวมราคาเครื่องและอุปกรณ์ต่อวันตามจำนวนวันที่เลือก
+- ตอนคืน คิดราคาจากจำนวนวันที่ใช้จริง (ขั้นต่ำ 1 วัน) และคิดค่าปรับวันละ 50% ของราคารวมต่อวันเมื่อคืนช้า
+- พนักงานตรวจรับเครื่องและยืนยันคืนก่อนปิดรายการ
+- แจ้งซ่อมได้เฉพาะเครื่องที่ว่าง เมื่อเปิดงานซ่อมเครื่องจะถูกกันออกจากการเช่า และจะกลับมาว่างเมื่อพนักงานปิดงาน
+
+## สัญญาฟังก์ชันหลัก
+
+### `database.py`
+
+- `fetch_all_consoles()` และ `fetch_console(console_id)` อ่านข้อมูลเครื่อง
+- `fetch_all_accessories()` คืนรายการอุปกรณ์พร้อม `quantity_available`
+- `insert_accessory(name, platform, daily_rate, quantity_total)` เพิ่มอุปกรณ์
+- `create_rental_transaction(..., accessories=None)` สร้างรายการเช่าแบบ atomic และตรวจสต็อก
+- `fetch_all_rentals()` และ `fetch_rental(rental_id)` คืนข้อมูลรายการเช่า รวม `accessory_daily_rate` และ `accessory_summary`
+- `request_rental_return(rental_id)` บันทึกคำขอคืน
+- `complete_rental_return(...)` ปิดรายการและทำให้เครื่องพร้อมเช่าอีกครั้งแบบ atomic
+- `fetch_maintenance_records(open_only=False)` อ่านประวัติงานซ่อม
+- `create_maintenance_record(console_id, issue)` เปิดงานซ่อมและเปลี่ยนสถานะเครื่องแบบ atomic
+- `complete_maintenance_record(maintenance_id, repair_cost, notes)` ปิดงานซ่อมและคืนสถานะเครื่องแบบ atomic
+
+ทุก query ใช้ parameter `%s`; วันที่ที่ส่งกลับเป็น `YYYY-MM-DD` และค่า `NUMERIC` ถูกแปลงเป็น `float`
+
+### `logic.py`
+
+- `add_console(...)` ตรวจข้อมูลและเพิ่มเครื่อง
+- `get_all_accessories()` และ `add_accessory(...)` อ่าน/เพิ่มอุปกรณ์
+- `validate_rental(..., accessories=None)` ตรวจผู้เช่า ระยะเวลา เครื่อง และสต็อกอุปกรณ์
+- `add_rental(..., accessories=None)` สร้างรายการเช่าและคำนวณยอดประมาณ
+- `return_console(rental_id)` คิดยอดสุดท้าย รวมค่าอุปกรณ์และค่าปรับ
+- `report_console_issue(console_id, issue)` ตรวจข้อมูลและแจ้งซ่อมเครื่อง
+- `complete_console_repair(maintenance_id, repair_cost, notes="")` ตรวจค่าซ่อมและปิดงาน
+- `request_my_return(rental_id, phone)` ตรวจเบอร์โทรก่อนส่งคำขอคืน (เก็บไว้สำหรับ UI ลูกค้าในอนาคต; desktop ปัจจุบันไม่เรียกใช้)
+- `check_staff_pin(pin)` ตรวจ PIN สำหรับเข้าโหมดพนักงาน
+
+## ข้อจำกัดและความปลอดภัย
+
+- PIN พนักงานเริ่มต้นคือ `1234` และเก็บไว้ใน `logic.py` เป็นเพียงด่านพื้นฐาน ไม่ใช่ระบบยืนยันตัวตนที่ปลอดภัยสำหรับใช้งานจริง
+- เวอร์ชัน desktop ปัจจุบันไม่มีหน้าลูกค้าสำหรับดูรายการเช่าหรือส่งคำขอคืน
+- ยังไม่มีระบบชำระเงินจริง คูปอง จองล่วงหน้า หรือบัญชีลูกค้าแบบรหัสผ่าน
+- ตรวจข้อมูลตัวอย่างและทดสอบการทำงานกับฐานข้อมูลจริงก่อนนำไปใช้กับร้าน
+
+## ตรวจสอบและ Git
+
+ก่อน commit ตรวจ `git status` และเพิ่มเฉพาะไฟล์ที่ต้องการ ห้ามเพิ่ม `db_config.py`, `.venv/` หรือ `__pycache__/`
+
+```powershell
+git status --short
+git add README.md database.py logic.py ui_flet.py
+git diff --cached --check
 ```
 
-`console_id` และ `daily_rate` ของ rental ต้องมีเสมอ (JOIN จากตาราง consoles) เพราะ
-`logic.return_console` ต้องใช้คิดราคาและเปลี่ยนสถานะเครื่อง ส่วน UI ไม่ได้ใช้สองคีย์นี้
-
-ข้อตกลงเรื่องชนิดข้อมูล (PostgreSQL คืน `date` และ `Decimal` ซึ่งไม่เหมือนที่ชั้นบนต้องการ):
-- `database.py` ต้องแปลงก่อนคืนเสมอ: วันที่เป็น string `YYYY-MM-DD` และ `NUMERIC` เป็น `float`
-- วันที่ใช้รูปแบบ `YYYY-MM-DD` เสมอ
-- เวลาส่งค่าเข้า SQL ใช้ placeholder `%s` เสมอ ห้ามต่อ string เอง (กัน SQL injection)
-
-## สัญญาฟังก์ชัน
-
-### `database.py` (Kitthin)
-```python
-init_db() -> None                                  # สร้างตารางถ้ายังไม่มี (เรียกอัตโนมัติอยู่แล้ว)
-insert_console(name, platform, daily_rate) -> int  # INSERT ... RETURNING console_id
-fetch_all_consoles() -> list[dict]
-fetch_console(console_id) -> dict | None
-set_console_status(console_id, status) -> None     # 'available' | 'rented'
-find_or_create_customer(name, phone) -> int        # คืน customer_id
-insert_rental(console_id, customer_id, rent_date, due_date) -> int   # RETURNING rental_id
-fetch_all_rentals() -> list[dict]                  # rental dict (JOIN แล้ว)
-fetch_rental(rental_id) -> dict | None
-close_rental(rental_id, return_date, total_price) -> None
-request_rental_return(rental_id) -> bool
-complete_rental_return(rental_id, console_id, return_date, total_price) -> bool
-create_rental_transaction(console_id, customer_name, phone, rent_date, due_date) -> int | None
-```
-
-ทุกฟังก์ชันเปิด connection ผ่าน `psycopg2` ด้วยค่าใน `db_config.py`, `commit()` เมื่อสำเร็จ และปิด connection เสมอ
-เมื่อเปิดแอป ระบบเพิ่มคอลัมน์ `return_requested_at` ให้ฐานข้อมูลเดิมอัตโนมัติ
-การเช่าจะล็อกแถวเครื่องและบันทึกลูกค้า/รายการเช่า/สถานะเครื่องใน transaction เดียว
-การยืนยันคืนจะปิดรายการเช่าและเปลี่ยนสถานะเครื่องเป็นว่างใน transaction เดียว
-
-### `logic.py` (Ariyawong)
-ฟังก์ชันที่คืน `(ok, message)`: `ok=False` แปลว่าทำไม่สำเร็จ และ `message` เป็นข้อความภาษาไทยพร้อมแสดงใน `messagebox` ได้ทันที
-UI ส่งค่าที่ผู้ใช้กรอกมาเป็น string (เช่น `days="2"`, `daily_rate="200"`) logic ต้องแปลงและตรวจเอง
-
-```python
-# ---- มีแล้ว ----
-get_all_consoles() -> list[dict]
-get_available_consoles() -> list[dict]
-get_all_rentals() -> list[dict]
-
-add_console(name, platform, daily_rate) -> tuple[bool, str]
-    # ชื่อ/แพลตฟอร์มไม่ว่าง / ราคา > 0 / ชื่อเครื่องห้ามซ้ำ -> insert_console
-
-validate_rental(console_id, customer_name, phone, days) -> tuple[bool, str]
-    # ชื่อไม่ว่าง / เบอร์ 10 หลักตัวเลข / days เป็นจำนวนเต็ม 1-30 / เครื่องต้อง available
-
-add_rental(console_id, customer_name, phone, days) -> tuple[bool, str]
-    # validate -> database.create_rental_transaction (ล็อกเครื่องและบันทึกแบบ atomic)
-
-return_console(rental_id) -> tuple[bool, str]
-    # คิดราคา = daily_rate * วันที่เช่าจริง (ขั้นต่ำ 1 วัน)
-    # เกิน due_date: ค่าปรับ = daily_rate * 0.5 ต่อวันที่เกิน
-    # complete_rental_return ปิดรายการและคืนสถานะเครื่องเป็นว่างแบบ atomic
-
-# ---- สำหรับโหมดลูกค้า/พนักงาน ----
-get_rentals_by_phone(phone) -> list[dict]
-    # เรียก database.fetch_all_rentals() แล้วกรองเฉพาะ phone นี้ (ไม่ต้องแก้ database.py)
-
-request_my_return(rental_id, phone) -> tuple[bool, str]
-    # เช็กเจ้าของรายการและส่งคำขอคืน รอพนักงานตรวจเครื่องก่อนปิดรายการ
-
-check_staff_pin(pin) -> bool
-    # เทียบกับค่า STAFF_PIN ที่ตั้งไว้บนหัวไฟล์ (ไม่ใช่ความปลอดภัยจริง แค่กันลูกค้าเข้าโหมดพนักงาน)
-```
-
-ค่าที่ร้านกำหนด (แก้ที่หัวไฟล์ `logic.py` ที่เดียว): เช่า 1-30 วัน, เบอร์โทร 10 หลัก,
-ค่าปรับเกินกำหนด = ครึ่งหนึ่งของราคา/วัน, ขั้นต่ำคิดเงิน 1 วัน
-
-### `ui_flet.py` (Suthinun)
-หน้าจอหลักสำหรับ desktop ใช้ Flet และเรียกเฉพาะฟังก์ชันใน `logic.py` ข้างบน; `ui.py` เดิมยังเก็บไว้เป็น Tkinter fallback
-
-- **ธีมหน้าจอ**: เปิดแอปด้วยธีมมืดเป็นค่าเริ่มต้น และกดปุ่มบนแถบด้านบนเพื่อสลับเป็นธีมสว่างได้
-- **โหมดพนักงาน** (มีแล้ว): รายการเครื่อง / เช่าเครื่อง / ตรวจรับและยืนยันคืน / ประวัติการเช่า / เพิ่มเครื่อง
-- **หน้าเลือกโหมด** ตอนเปิดแอป: ปุ่ม "ลูกค้า" และ "พนักงาน" (ใส่ PIN ก่อนเข้า)
-- **โหมดลูกค้า**: เครื่องที่ว่าง / เช่าเครื่อง / การเช่าของฉัน (กรอกเบอร์ เห็นเฉพาะของตัวเอง และส่งคำขอคืนได้)
-
-ข้อจำกัดที่รู้อยู่: ยืนยันตัวลูกค้าด้วยเบอร์โทรอย่างเดียว ใครรู้เบอร์คนอื่นก็ดูรายการเช่าของเขาได้
-(ยอมรับได้สำหรับงานวิชา ถ้าต้องการปลอดภัยขึ้นค่อยเพิ่มรหัสผ่านลูกค้าทีหลัง)
-
-## ขั้นตอนทำงาน (Git)
-
-1. แต่ละคนทำใน branch ของตัวเอง ห้าม push ตรงเข้า `main`
-2. ทำเสร็จเปิด Pull Request เข้า `main`
-3. ลำดับ merge: `database` → `logic` → `ui`
-4. ก่อนเริ่มงานทุกครั้ง `git pull origin main` เข้ามาใน branch ตัวเอง
-5. `git add` ให้ระบุชื่อไฟล์ ไม่ใช้ `git add .` และเช็ก `git status` ก่อน commit ทุกครั้ง
-6. ห้าม commit: `db_config.py`, `.venv/`, `__pycache__/`
-
-## รัน
-
-```
-python ui_flet.py        # macOS ใช้ python3 ui_flet.py
-```
-
-หากต้องการเปิดหน้าจอ Tkinter เดิม ให้รัน `python ui.py`
+ทำงานใน branch ของตัวเองและเปิด Pull Request เข้า `main` ตาม workflow ของทีม
