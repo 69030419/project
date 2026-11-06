@@ -153,6 +153,7 @@ class RentalApp:
             (ft.Icons.ADD, "เพิ่มเครื่อง"),
             (ft.Icons.EXTENSION, "อุปกรณ์เสริม"),
             (ft.Icons.BUILD, "ซ่อมบำรุง"),
+            (ft.Icons.LOCAL_OFFER, "คูปอง"),
         ]
         return [ft.NavigationRailDestination(icon=icon, label=label) for icon, label in items]
 
@@ -176,7 +177,8 @@ class RentalApp:
     def build_view(self):
         return [self.staff_consoles_view, self.staff_rent_view, self.staff_returns_view,
             self.staff_history_view, self.staff_add_console_view,
-            self.staff_accessories_view, self.staff_maintenance_view][self.view_index]()
+            self.staff_accessories_view, self.staff_maintenance_view,
+            self.staff_coupons_view][self.view_index]()
 
     def page_heading(self, title, subtitle, refresh=True):
         controls = [
@@ -347,6 +349,10 @@ class RentalApp:
         self.staff_name_field = ft.TextField(label="ชื่อลูกค้า", width=520)
         self.staff_phone_field = ft.TextField(label="เบอร์โทร 10 หลัก", width=520,
                                               keyboard_type=ft.KeyboardType.PHONE)
+        self.coupon_code_field = ft.TextField(
+            label="รหัสคูปอง (ไม่บังคับ)",
+            width=520,
+        )
         self.staff_days_field = ft.TextField(label="จำนวนวัน", value="1", width=180,
                                              keyboard_type=ft.KeyboardType.NUMBER,
                                              on_change=self.update_rent_estimate)
@@ -401,6 +407,8 @@ class RentalApp:
                             console_field,
                             name_field,
                             phone_field,
+                            self.coupon_code_field,
+                            ft.Text("ส่วนลดคิดจากค่าเช่าจริง ไม่ลดค่าปรับล่าช้า", size=12, color=MUTED),
                             ft.Row([days_field, estimate], spacing=24,
                                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
                             self.section(
@@ -488,6 +496,7 @@ class RentalApp:
             phone_field.value.strip(),
             days_field.value.strip(),
             accessories=accessories,
+            coupon_code=self.coupon_code_field.value,
         )
         if not ok:
             self.show_message(message, error=True)
@@ -589,14 +598,19 @@ class RentalApp:
             )
         table = self.data_table(
             [ft.DataColumn(ft.Text(label)) for label in
-                 ("รหัส", "เครื่อง", "อุปกรณ์เสริม", "ลูกค้า", "เบอร์โทร", "เช่า",
-                  "กำหนดคืน", "คืนจริง", "ยอดรวม")],
+                 ("รหัส", "เครื่อง", "อุปกรณ์เสริม", "คูปอง", "ส่วนลด", "ลูกค้า",
+                "เบอร์โทร", "เช่า", "กำหนดคืน", "คืนจริง", "ยอดรวม")],
             [
                 ft.DataRow(
                     cells=[
                         ft.DataCell(ft.Text(str(rental["rental_id"]))),
                         ft.DataCell(ft.Text(rental["console_name"])),
                         ft.DataCell(ft.Text(rental.get("accessory_summary") or "-")),
+                        ft.DataCell(ft.Text(rental.get("coupon_code") or "-")),
+                        ft.DataCell(ft.Text(
+                            f"{rental['discount_amount']:,.0f} บาท"
+                            if rental.get("coupon_code") and rental.get("return_date")
+                            else "คำนวณตอนคืน" if rental.get("coupon_code") else "-")),
                         ft.DataCell(ft.Text(rental["customer_name"])),
                         ft.DataCell(ft.Text(rental["phone"])),
                         ft.DataCell(ft.Text(rental["rent_date"])),
@@ -848,6 +862,84 @@ class RentalApp:
                 actions_alignment=ft.MainAxisAlignment.END,
             )
         )
+
+    def staff_coupons_view(self):
+        coupons = logic.get_all_coupons()
+        self.new_coupon_code = ft.TextField(label="รหัสคูปอง", width=520)
+        self.new_coupon_type = ft.Dropdown(
+            label="ประเภทส่วนลด",
+            value="percent",
+            width=240,
+            options=[
+                ft.DropdownOption(key="percent", text="เปอร์เซ็นต์"),
+                ft.DropdownOption(key="fixed", text="จำนวนเงิน"),
+            ],
+        )
+        self.new_coupon_value = ft.TextField(
+            label="มูลค่าส่วนลด",
+            width=220,
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
+        self.new_coupon_expiry = ft.TextField(
+            label="วันหมดอายุ (YYYY-MM-DD, เว้นว่าง = ไม่หมดอายุ)",
+            width=360,
+        )
+        self.new_coupon_limit = ft.TextField(
+            label="จำนวนครั้งที่ใช้ได้ (เว้นว่าง = ไม่จำกัด)",
+            width=360,
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
+        content = [
+            self.page_heading("จัดการคูปอง", "เพิ่มโค้ดส่วนลดและตรวจสอบจำนวนครั้งที่ถูกใช้"),
+        ]
+        if coupons:
+            rows = []
+            for coupon in coupons:
+                discount = (f"{coupon['discount_value']:,.0f}%"
+                            if coupon["discount_type"] == "percent"
+                            else f"{coupon['discount_value']:,.0f} บาท")
+                limit = (str(coupon["max_uses"])
+                         if coupon["max_uses"] is not None else "ไม่จำกัด")
+                rows.append(ft.DataRow(cells=[
+                    ft.DataCell(ft.Text(coupon["code"])),
+                    ft.DataCell(ft.Text(discount)),
+                    ft.DataCell(ft.Text(coupon["valid_until"] or "ไม่หมดอายุ")),
+                    ft.DataCell(ft.Text(f"{coupon['used_count']} / {limit}")),
+                    ft.DataCell(ft.Text("เปิดใช้" if coupon["active"] else "ปิดใช้")),
+                ]))
+            content.append(self.section(self.data_table(
+                [ft.DataColumn(ft.Text(label)) for label in
+                 ("โค้ด", "ส่วนลด", "หมดอายุ", "ใช้แล้ว / จำกัด", "สถานะ")],
+                rows,
+            )))
+        else:
+            content.append(self.empty_state("ยังไม่มีคูปอง"))
+        content.append(self.section(ft.Column(
+            [
+                ft.Text("เพิ่มคูปอง", size=17, weight=ft.FontWeight.BOLD, color=INK),
+                self.new_coupon_code,
+                ft.Row([self.new_coupon_type, self.new_coupon_value], spacing=14),
+                self.new_coupon_expiry,
+                self.new_coupon_limit,
+                ft.FilledButton("เพิ่มคูปอง", icon=ft.Icons.ADD,
+                                on_click=self.submit_new_coupon),
+            ],
+            spacing=16,
+            width=600,
+        ), padding=24))
+        return ft.Column(content, spacing=18, scroll=ft.ScrollMode.AUTO, expand=True)
+
+    def submit_new_coupon(self):
+        ok, message = logic.add_coupon(
+            self.new_coupon_code.value,
+            self.new_coupon_type.value,
+            self.new_coupon_value.value,
+            self.new_coupon_expiry.value,
+            self.new_coupon_limit.value,
+        )
+        self.show_message(message, error=not ok)
+        if ok:
+            self.render_view()
 
     def confirm(self, title, message, action):
         def close_dialog():
