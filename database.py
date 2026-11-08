@@ -26,6 +26,15 @@ SAMPLE_CONSOLES = [
     ("Switch #1", "Nintendo Switch", 120),
     ("Xbox Series X #1", "Xbox Series X", 180),
 ]
+# ข้อมูลตัวอย่างเท่านั้น ควรแก้จำนวนและราคาให้ตรงกับสต็อกจริงของร้าน
+SAMPLE_ACCESSORIES = [
+    ("จอย DualSense เสริม", "PS5", 50, 2),
+    ("หูฟังเกมมิ่ง", "PS5", 30, 1),
+    ("Joy-Con เสริม (คู่)", "Nintendo Switch", 30, 2),
+    ("Pro Controller", "Nintendo Switch", 40, 1),
+    ("จอย Xbox เสริม", "Xbox Series X", 50, 2),
+    ("หูฟัง Xbox", "Xbox Series X", 30, 1),
+]
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS consoles (
@@ -36,6 +45,21 @@ CREATE TABLE IF NOT EXISTS consoles (
     status      VARCHAR(20)   NOT NULL DEFAULT 'available'
                 CHECK (status IN ('available', 'rented'))
 );
+
+CREATE TABLE IF NOT EXISTS maintenance_records (
+    maintenance_id SERIAL PRIMARY KEY,
+    console_id     INTEGER NOT NULL REFERENCES consoles(console_id),
+    issue          TEXT NOT NULL,
+    reported_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status         VARCHAR(20) NOT NULL DEFAULT 'open'
+                   CHECK (status IN ('open', 'completed')),
+    repair_cost    NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (repair_cost >= 0),
+    notes          TEXT NOT NULL DEFAULT '',
+    completed_at   TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_open_maintenance_per_console
+    ON maintenance_records(console_id) WHERE status = 'open';
 
 CREATE TABLE IF NOT EXISTS customers (
     customer_id SERIAL PRIMARY KEY,
@@ -53,16 +77,71 @@ CREATE TABLE IF NOT EXISTS rentals (
     return_requested_at TIMESTAMP,
     total_price  NUMERIC(10,2) NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS coupons (
+    coupon_id      SERIAL PRIMARY KEY,
+    code           VARCHAR(40) NOT NULL UNIQUE,
+    discount_type  VARCHAR(10) NOT NULL CHECK (discount_type IN ('percent', 'fixed')),
+    discount_value NUMERIC(10,2) NOT NULL CHECK (discount_value > 0),
+    valid_from     DATE NOT NULL DEFAULT CURRENT_DATE,
+    valid_until    DATE,
+    max_uses       INTEGER CHECK (max_uses IS NULL OR max_uses > 0),
+    active         BOOLEAN NOT NULL DEFAULT TRUE,
+    CHECK (valid_until IS NULL OR valid_until >= valid_from),
+    CHECK (discount_type <> 'percent' OR discount_value <= 100)
+);
+
+CREATE TABLE IF NOT EXISTS coupon_redemptions (
+    redemption_id  SERIAL PRIMARY KEY,
+    coupon_id      INTEGER NOT NULL REFERENCES coupons(coupon_id),
+    rental_id      INTEGER NOT NULL UNIQUE REFERENCES rentals(rental_id),
+    coupon_code    VARCHAR(40) NOT NULL,
+    discount_type  VARCHAR(10) NOT NULL CHECK (discount_type IN ('percent', 'fixed')),
+    discount_value NUMERIC(10,2) NOT NULL CHECK (discount_value > 0),
+    discount_amount NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (discount_amount >= 0),
+    redeemed_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS accessories (
+    accessory_id   SERIAL PRIMARY KEY,
+    name           VARCHAR(100) NOT NULL UNIQUE,
+    platform       VARCHAR(50) NOT NULL DEFAULT '',
+    daily_rate     NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (daily_rate >= 0),
+    quantity_total INTEGER NOT NULL CHECK (quantity_total >= 0),
+    active         BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+-- เก็บราคา ณ วันที่เช่า เพื่อไม่ให้การเปลี่ยนราคาภายหลังแก้ประวัติรายการเช่าเดิม
+CREATE TABLE IF NOT EXISTS rental_accessories (
+    rental_id     INTEGER NOT NULL REFERENCES rentals(rental_id) ON DELETE CASCADE,
+    accessory_id  INTEGER NOT NULL REFERENCES accessories(accessory_id),
+    quantity      INTEGER NOT NULL CHECK (quantity > 0),
+    daily_rate    NUMERIC(10,2) NOT NULL CHECK (daily_rate >= 0),
+    PRIMARY KEY (rental_id, accessory_id)
+);
 """
 
 # rental ที่ JOIN แล้ว: มี console_id และ daily_rate ด้วย เพราะ logic.return_console ต้องใช้
 RENTAL_SELECT = """
 SELECT r.rental_id, r.console_id, c.name AS console_name, c.daily_rate,
        cu.name AS customer_name, cu.phone,
-    r.rent_date, r.due_date, r.return_date, r.return_requested_at, r.total_price
+       r.rent_date, r.due_date, r.return_date, r.return_requested_at, r.total_price,
+       COALESCE((SELECT SUM(ra.daily_rate * ra.quantity)
+                 FROM rental_accessories ra WHERE ra.rental_id = r.rental_id), 0)
+           AS accessory_daily_rate,
+       COALESCE((SELECT STRING_AGG(a.name || ' x ' || ra.quantity::TEXT, ', '
+                                   ORDER BY a.name)
+                 FROM rental_accessories ra
+                 JOIN accessories a ON a.accessory_id = ra.accessory_id
+           WHERE ra.rental_id = r.rental_id), '') AS accessory_summary,
+    COALESCE(cr.coupon_code, '') AS coupon_code,
+    COALESCE(cr.discount_type, '') AS coupon_discount_type,
+    COALESCE(cr.discount_value, 0) AS coupon_discount_value,
+    COALESCE(cr.discount_amount, 0) AS discount_amount
 FROM rentals r
 JOIN consoles  c  ON c.console_id  = r.console_id
 JOIN customers cu ON cu.customer_id = r.customer_id
+LEFT JOIN coupon_redemptions cr ON cr.rental_id = r.rental_id
 """
 
 _tables_ready = False
@@ -113,13 +192,27 @@ def _ensure_tables():
             with conn.cursor() as cur:
                 cur.execute(SCHEMA_SQL)
                 cur.execute(
+                    "ALTER TABLE consoles DROP CONSTRAINT IF EXISTS consoles_status_check")
+                cur.execute(
+                    "ALTER TABLE consoles ADD CONSTRAINT consoles_status_check "
+                    "CHECK (status IN ('available', 'rented', 'maintenance'))")
+                cur.execute(
                     "ALTER TABLE rentals ADD COLUMN IF NOT EXISTS return_requested_at TIMESTAMP")
+                cur.execute(
+                    "ALTER TABLE accessories ADD COLUMN IF NOT EXISTS platform "
+                    "VARCHAR(50) NOT NULL DEFAULT ''")
                 if SEED_SAMPLE_CONSOLES:
                     cur.execute("SELECT COUNT(*) FROM consoles")
                     if cur.fetchone()[0] == 0:
                         cur.executemany(
                             "INSERT INTO consoles (name, platform, daily_rate) "
                             "VALUES (%s, %s, %s)", SAMPLE_CONSOLES)
+                # เพิ่มอุปกรณ์ตัวอย่างเฉพาะตอนที่คลังอุปกรณ์ยังว่าง
+                cur.execute("SELECT COUNT(*) FROM accessories")
+                if cur.fetchone()[0] == 0:
+                    cur.executemany(
+                        "INSERT INTO accessories (name, platform, daily_rate, quantity_total) "
+                        "VALUES (%s, %s, %s, %s)", SAMPLE_ACCESSORIES)
     finally:
         conn.close()
     _tables_ready = True
@@ -153,6 +246,123 @@ def fetch_console(console_id):
         return _clean(cur.fetchone())
 
 
+def fetch_maintenance_records(open_only=False):
+    with _cursor() as cur:
+        query = (
+            "SELECT m.maintenance_id, m.console_id, c.name AS console_name, "
+            "c.platform, m.issue, m.reported_at, m.status, m.repair_cost, "
+            "m.notes, m.completed_at "
+            "FROM maintenance_records m "
+            "JOIN consoles c ON c.console_id = m.console_id")
+        if open_only:
+            query += " WHERE m.status = 'open'"
+        query += " ORDER BY m.reported_at DESC, m.maintenance_id DESC"
+        cur.execute(query)
+        return [_clean(row) for row in cur.fetchall()]
+
+
+def create_maintenance_record(console_id, issue):
+    with _cursor() as cur:
+        # ล็อกเครื่องเพื่อไม่ให้การแจ้งซ่อมชนกับรายการเช่าที่กำลังทำพร้อมกัน
+        cur.execute("SELECT status FROM consoles WHERE console_id = %s FOR UPDATE",
+                    (console_id,))
+        console = cur.fetchone()
+        if console is None or console["status"] != "available":
+            return None
+        cur.execute(
+            "INSERT INTO maintenance_records (console_id, issue) "
+            "VALUES (%s, %s) RETURNING maintenance_id", (console_id, issue))
+        maintenance_id = cur.fetchone()["maintenance_id"]
+        cur.execute(
+            "UPDATE consoles SET status = 'maintenance' "
+            "WHERE console_id = %s AND status = 'available'", (console_id,))
+        if cur.rowcount != 1:
+            raise RuntimeError("สถานะเครื่องเปลี่ยนระหว่างแจ้งซ่อม")
+        return maintenance_id
+
+
+def complete_maintenance_record(maintenance_id, repair_cost, notes):
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT console_id, status FROM maintenance_records "
+            "WHERE maintenance_id = %s FOR UPDATE", (maintenance_id,))
+        record = cur.fetchone()
+        if record is None or record["status"] != "open":
+            return False
+        cur.execute(
+            "UPDATE maintenance_records SET status = 'completed', repair_cost = %s, "
+            "notes = %s, completed_at = CURRENT_TIMESTAMP "
+            "WHERE maintenance_id = %s AND status = 'open'",
+            (repair_cost, notes, maintenance_id))
+        if cur.rowcount != 1:
+            return False
+        cur.execute(
+            "UPDATE consoles SET status = 'available' "
+            "WHERE console_id = %s AND status = 'maintenance'",
+            (record["console_id"],))
+        if cur.rowcount != 1:
+            raise RuntimeError("สถานะเครื่องไม่ตรงกับงานซ่อม")
+        return True
+
+
+def fetch_all_accessories():
+    with _cursor() as cur:
+        # อุปกรณ์ที่ผูกกับรายการเช่าซึ่งยังไม่คืน ถือว่ายังไม่พร้อมให้เช่า
+        cur.execute(
+            "SELECT a.accessory_id, a.name, a.platform, a.daily_rate, "
+            "a.quantity_total, a.active, "
+            "a.quantity_total - COALESCE(SUM("
+            "CASE WHEN r.return_date IS NULL THEN ra.quantity ELSE 0 END), 0) "
+            "AS quantity_available "
+            "FROM accessories a "
+            "LEFT JOIN rental_accessories ra ON ra.accessory_id = a.accessory_id "
+            "LEFT JOIN rentals r ON r.rental_id = ra.rental_id "
+            "GROUP BY a.accessory_id ORDER BY a.accessory_id")
+        return [_clean(row) for row in cur.fetchall()]
+
+
+def fetch_all_coupons():
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT c.coupon_id, c.code, c.discount_type, c.discount_value, "
+            "c.valid_from, c.valid_until, c.max_uses, c.active, "
+            "COUNT(cr.redemption_id) AS used_count "
+            "FROM coupons c LEFT JOIN coupon_redemptions cr "
+            "ON cr.coupon_id = c.coupon_id "
+            "GROUP BY c.coupon_id ORDER BY c.coupon_id DESC")
+        return [_clean(row) for row in cur.fetchall()]
+
+
+def fetch_coupon(code):
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT c.coupon_id, c.code, c.discount_type, c.discount_value, "
+            "c.valid_from, c.valid_until, c.max_uses, c.active, "
+            "COUNT(cr.redemption_id) AS used_count "
+            "FROM coupons c LEFT JOIN coupon_redemptions cr "
+            "ON cr.coupon_id = c.coupon_id "
+            "WHERE c.code = %s GROUP BY c.coupon_id", (code,))
+        return _clean(cur.fetchone())
+
+
+def insert_coupon(code, discount_type, discount_value, valid_until, max_uses):
+    with _cursor() as cur:
+        cur.execute(
+            "INSERT INTO coupons (code, discount_type, discount_value, valid_until, max_uses) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING coupon_id",
+            (code, discount_type, discount_value, valid_until, max_uses))
+        return cur.fetchone()["coupon_id"]
+
+
+def insert_accessory(name, platform, daily_rate, quantity_total):
+    with _cursor() as cur:
+        cur.execute(
+            "INSERT INTO accessories (name, platform, daily_rate, quantity_total) "
+            "VALUES (%s, %s, %s, %s) RETURNING accessory_id",
+            (name, platform, daily_rate, quantity_total))
+        return cur.fetchone()["accessory_id"]
+
+
 def set_console_status(console_id, status):
     with _cursor() as cur:
         cur.execute("UPDATE consoles SET status = %s WHERE console_id = %s",
@@ -178,13 +388,61 @@ def insert_rental(console_id, customer_id, rent_date, due_date):
         return cur.fetchone()["rental_id"]
 
 
-def create_rental_transaction(console_id, customer_name, phone, rent_date, due_date):
+def create_rental_transaction(console_id, customer_name, phone, rent_date, due_date,
+                              accessories=None, coupon_code=None):
     with _cursor() as cur:
-        cur.execute("SELECT status FROM consoles WHERE console_id = %s FOR UPDATE",
+    # ล็อกเครื่องและอุปกรณ์ตามลำดับคงที่ เพื่อป้องกันการเช่าพร้อมกันจนสต็อกเกินจำนวน
+        cur.execute("SELECT status, platform FROM consoles WHERE console_id = %s FOR UPDATE",
                     (console_id,))
         console = cur.fetchone()
         if console is None or console["status"] != "available":
             return None
+
+        selected_accessories = sorted(
+            (int(item["accessory_id"]), int(item["quantity"]))
+            for item in (accessories or []))
+        accessory_rows = []
+        for accessory_id, quantity in selected_accessories:
+            if quantity <= 0:
+                return None
+            cur.execute(
+                "SELECT platform, daily_rate, quantity_total FROM accessories "
+                "WHERE accessory_id = %s AND active = TRUE FOR UPDATE",
+                (accessory_id,))
+            accessory = cur.fetchone()
+            if accessory is None or (
+                    accessory["platform"] and accessory["platform"] != console["platform"]):
+                return None
+            cur.execute(
+                "SELECT COALESCE(SUM(ra.quantity), 0) AS rented_quantity "
+                "FROM rental_accessories ra JOIN rentals r ON r.rental_id = ra.rental_id "
+                "WHERE ra.accessory_id = %s AND r.return_date IS NULL",
+                (accessory_id,))
+            rented_quantity = cur.fetchone()["rented_quantity"]
+            if accessory["quantity_total"] - rented_quantity < quantity:
+                return None
+            accessory_rows.append((accessory_id, quantity, accessory["daily_rate"]))
+
+        coupon = None
+        if coupon_code:
+            # ล็อกคูปองเพื่อไม่ให้หลายรายการใช้สิทธิ์ครั้งสุดท้ายพร้อมกัน
+            cur.execute(
+                "SELECT coupon_id, code, discount_type, discount_value, valid_from, "
+                "valid_until, max_uses, active FROM coupons "
+                "WHERE code = %s FOR UPDATE", (coupon_code,))
+            coupon = cur.fetchone()
+            if coupon is None or not coupon["active"]:
+                return None
+            today = date.today()
+            if coupon["valid_from"] > today or (
+                    coupon["valid_until"] is not None and coupon["valid_until"] < today):
+                return None
+            cur.execute(
+                "SELECT COUNT(*) AS used_count FROM coupon_redemptions WHERE coupon_id = %s",
+                (coupon["coupon_id"],))
+            used_count = cur.fetchone()["used_count"]
+            if coupon["max_uses"] is not None and used_count >= coupon["max_uses"]:
+                return None
 
         cur.execute(
             "INSERT INTO customers (name, phone) VALUES (%s, %s) "
@@ -196,6 +454,19 @@ def create_rental_transaction(console_id, customer_name, phone, rent_date, due_d
             "VALUES (%s, %s, %s, %s) RETURNING rental_id",
             (console_id, customer_id, rent_date, due_date))
         rental_id = cur.fetchone()["rental_id"]
+        # บันทึกราคาปัจจุบันของอุปกรณ์ไว้เป็น snapshot สำหรับประวัติและการคิดเงินตอนคืน
+        cur.executemany(
+            "INSERT INTO rental_accessories (rental_id, accessory_id, quantity, daily_rate) "
+            "VALUES (%s, %s, %s, %s)",
+            [(rental_id, accessory_id, quantity, daily_rate)
+             for accessory_id, quantity, daily_rate in accessory_rows])
+        if coupon is not None:
+            cur.execute(
+                "INSERT INTO coupon_redemptions "
+                "(coupon_id, rental_id, coupon_code, discount_type, discount_value) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (coupon["coupon_id"], rental_id, coupon["code"],
+                 coupon["discount_type"], coupon["discount_value"]))
         cur.execute(
             "UPDATE consoles SET status = 'rented' "
             "WHERE console_id = %s AND status = 'available'", (console_id,))
@@ -233,7 +504,8 @@ def request_rental_return(rental_id):
         return cur.fetchone() is not None
 
 
-def complete_rental_return(rental_id, console_id, return_date, total_price):
+def complete_rental_return(rental_id, console_id, return_date, total_price,
+                           discount_amount=0):
     with _cursor() as cur:
         cur.execute(
             "UPDATE rentals SET return_date = %s, total_price = %s "
@@ -242,6 +514,9 @@ def complete_rental_return(rental_id, console_id, return_date, total_price):
             (return_date, total_price, rental_id, console_id))
         if cur.fetchone() is None:
             return False
+        cur.execute(
+            "UPDATE coupon_redemptions SET discount_amount = %s WHERE rental_id = %s",
+            (discount_amount, rental_id))
         cur.execute(
             "UPDATE consoles SET status = 'available' "
             "WHERE console_id = %s AND status = 'rented'",
