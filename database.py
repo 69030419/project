@@ -78,6 +78,30 @@ CREATE TABLE IF NOT EXISTS rentals (
     total_price  NUMERIC(10,2) NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS coupons (
+    coupon_id      SERIAL PRIMARY KEY,
+    code           VARCHAR(40) NOT NULL UNIQUE,
+    discount_type  VARCHAR(10) NOT NULL CHECK (discount_type IN ('percent', 'fixed')),
+    discount_value NUMERIC(10,2) NOT NULL CHECK (discount_value > 0),
+    valid_from     DATE NOT NULL DEFAULT CURRENT_DATE,
+    valid_until    DATE,
+    max_uses       INTEGER CHECK (max_uses IS NULL OR max_uses > 0),
+    active         BOOLEAN NOT NULL DEFAULT TRUE,
+    CHECK (valid_until IS NULL OR valid_until >= valid_from),
+    CHECK (discount_type <> 'percent' OR discount_value <= 100)
+);
+
+CREATE TABLE IF NOT EXISTS coupon_redemptions (
+    redemption_id  SERIAL PRIMARY KEY,
+    coupon_id      INTEGER NOT NULL REFERENCES coupons(coupon_id),
+    rental_id      INTEGER NOT NULL UNIQUE REFERENCES rentals(rental_id),
+    coupon_code    VARCHAR(40) NOT NULL,
+    discount_type  VARCHAR(10) NOT NULL CHECK (discount_type IN ('percent', 'fixed')),
+    discount_value NUMERIC(10,2) NOT NULL CHECK (discount_value > 0),
+    discount_amount NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (discount_amount >= 0),
+    redeemed_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS accessories (
     accessory_id   SERIAL PRIMARY KEY,
     name           VARCHAR(100) NOT NULL UNIQUE,
@@ -109,10 +133,15 @@ SELECT r.rental_id, r.console_id, c.name AS console_name, c.daily_rate,
                                    ORDER BY a.name)
                  FROM rental_accessories ra
                  JOIN accessories a ON a.accessory_id = ra.accessory_id
-                 WHERE ra.rental_id = r.rental_id), '') AS accessory_summary
+           WHERE ra.rental_id = r.rental_id), '') AS accessory_summary,
+    COALESCE(cr.coupon_code, '') AS coupon_code,
+    COALESCE(cr.discount_type, '') AS coupon_discount_type,
+    COALESCE(cr.discount_value, 0) AS coupon_discount_value,
+    COALESCE(cr.discount_amount, 0) AS discount_amount
 FROM rentals r
 JOIN consoles  c  ON c.console_id  = r.console_id
 JOIN customers cu ON cu.customer_id = r.customer_id
+LEFT JOIN coupon_redemptions cr ON cr.rental_id = r.rental_id
 """
 
 _tables_ready = False
@@ -292,6 +321,39 @@ def fetch_all_accessories():
         return [_clean(row) for row in cur.fetchall()]
 
 
+def fetch_all_coupons():
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT c.coupon_id, c.code, c.discount_type, c.discount_value, "
+            "c.valid_from, c.valid_until, c.max_uses, c.active, "
+            "COUNT(cr.redemption_id) AS used_count "
+            "FROM coupons c LEFT JOIN coupon_redemptions cr "
+            "ON cr.coupon_id = c.coupon_id "
+            "GROUP BY c.coupon_id ORDER BY c.coupon_id DESC")
+        return [_clean(row) for row in cur.fetchall()]
+
+
+def fetch_coupon(code):
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT c.coupon_id, c.code, c.discount_type, c.discount_value, "
+            "c.valid_from, c.valid_until, c.max_uses, c.active, "
+            "COUNT(cr.redemption_id) AS used_count "
+            "FROM coupons c LEFT JOIN coupon_redemptions cr "
+            "ON cr.coupon_id = c.coupon_id "
+            "WHERE c.code = %s GROUP BY c.coupon_id", (code,))
+        return _clean(cur.fetchone())
+
+
+def insert_coupon(code, discount_type, discount_value, valid_until, max_uses):
+    with _cursor() as cur:
+        cur.execute(
+            "INSERT INTO coupons (code, discount_type, discount_value, valid_until, max_uses) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING coupon_id",
+            (code, discount_type, discount_value, valid_until, max_uses))
+        return cur.fetchone()["coupon_id"]
+
+
 def insert_accessory(name, platform, daily_rate, quantity_total):
     with _cursor() as cur:
         cur.execute(
@@ -327,7 +389,7 @@ def insert_rental(console_id, customer_id, rent_date, due_date):
 
 
 def create_rental_transaction(console_id, customer_name, phone, rent_date, due_date,
-                              accessories=None):
+                              accessories=None, coupon_code=None):
     with _cursor() as cur:
     # ล็อกเครื่องและอุปกรณ์ตามลำดับคงที่ เพื่อป้องกันการเช่าพร้อมกันจนสต็อกเกินจำนวน
         cur.execute("SELECT status, platform FROM consoles WHERE console_id = %s FOR UPDATE",
@@ -361,6 +423,27 @@ def create_rental_transaction(console_id, customer_name, phone, rent_date, due_d
                 return None
             accessory_rows.append((accessory_id, quantity, accessory["daily_rate"]))
 
+        coupon = None
+        if coupon_code:
+            # ล็อกคูปองเพื่อไม่ให้หลายรายการใช้สิทธิ์ครั้งสุดท้ายพร้อมกัน
+            cur.execute(
+                "SELECT coupon_id, code, discount_type, discount_value, valid_from, "
+                "valid_until, max_uses, active FROM coupons "
+                "WHERE code = %s FOR UPDATE", (coupon_code,))
+            coupon = cur.fetchone()
+            if coupon is None or not coupon["active"]:
+                return None
+            today = date.today()
+            if coupon["valid_from"] > today or (
+                    coupon["valid_until"] is not None and coupon["valid_until"] < today):
+                return None
+            cur.execute(
+                "SELECT COUNT(*) AS used_count FROM coupon_redemptions WHERE coupon_id = %s",
+                (coupon["coupon_id"],))
+            used_count = cur.fetchone()["used_count"]
+            if coupon["max_uses"] is not None and used_count >= coupon["max_uses"]:
+                return None
+
         cur.execute(
             "INSERT INTO customers (name, phone) VALUES (%s, %s) "
             "ON CONFLICT (phone) DO UPDATE SET name = customers.name "
@@ -377,6 +460,13 @@ def create_rental_transaction(console_id, customer_name, phone, rent_date, due_d
             "VALUES (%s, %s, %s, %s)",
             [(rental_id, accessory_id, quantity, daily_rate)
              for accessory_id, quantity, daily_rate in accessory_rows])
+        if coupon is not None:
+            cur.execute(
+                "INSERT INTO coupon_redemptions "
+                "(coupon_id, rental_id, coupon_code, discount_type, discount_value) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (coupon["coupon_id"], rental_id, coupon["code"],
+                 coupon["discount_type"], coupon["discount_value"]))
         cur.execute(
             "UPDATE consoles SET status = 'rented' "
             "WHERE console_id = %s AND status = 'available'", (console_id,))
@@ -414,7 +504,8 @@ def request_rental_return(rental_id):
         return cur.fetchone() is not None
 
 
-def complete_rental_return(rental_id, console_id, return_date, total_price):
+def complete_rental_return(rental_id, console_id, return_date, total_price,
+                           discount_amount=0):
     with _cursor() as cur:
         cur.execute(
             "UPDATE rentals SET return_date = %s, total_price = %s "
@@ -423,6 +514,9 @@ def complete_rental_return(rental_id, console_id, return_date, total_price):
             (return_date, total_price, rental_id, console_id))
         if cur.fetchone() is None:
             return False
+        cur.execute(
+            "UPDATE coupon_redemptions SET discount_amount = %s WHERE rental_id = %s",
+            (discount_amount, rental_id))
         cur.execute(
             "UPDATE consoles SET status = 'available' "
             "WHERE console_id = %s AND status = 'rented'",
