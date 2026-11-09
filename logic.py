@@ -40,6 +40,18 @@ def get_available_consoles():
     return [c for c in database.fetch_all_consoles() if c["status"] == "available"]
 
 
+def get_all_accessories():
+    return database.fetch_all_accessories()
+
+
+def get_all_coupons():
+    return database.fetch_all_coupons()
+
+
+def get_maintenance_records(open_only=False):
+    return database.fetch_maintenance_records(open_only=open_only)
+
+
 def get_all_rentals():
     return database.fetch_all_rentals()
 
@@ -71,6 +83,125 @@ def check_staff_pin(pin):
     return pin == STAFF_PIN
 
 
+# ---------- คูปองส่วนลด ----------
+def _get_usable_coupon(code):
+    code = (code or "").strip().upper()
+    if not code:
+        return True, "", None
+    coupon = database.fetch_coupon(code)
+    if coupon is None or not coupon["active"]:
+        return False, "ไม่พบคูปองหรือคูปองถูกปิดใช้งาน", None
+    today = date.today().isoformat()
+    if coupon["valid_from"] > today or (
+            coupon["valid_until"] is not None and coupon["valid_until"] < today):
+        return False, "คูปองยังไม่เริ่มใช้หรือหมดอายุแล้ว", None
+    if coupon["max_uses"] is not None and coupon["used_count"] >= coupon["max_uses"]:
+        return False, "คูปองถูกใช้ครบจำนวนแล้ว", None
+    return True, "", coupon
+
+
+def calculate_coupon_discount(base_amount, discount_type, discount_value):
+    if discount_type == "percent":
+        discount = base_amount * discount_value / 100
+    elif discount_type == "fixed":
+        discount = discount_value
+    else:
+        return 0
+    return round(min(base_amount, discount), 2)
+
+
+@_safe
+def add_coupon(code, discount_type, discount_value, valid_until="", max_uses=""):
+    code = (code or "").strip().upper()
+    if not code:
+        return False, "กรุณากรอกรหัสคูปอง"
+    if len(code) > 40:
+        return False, "รหัสคูปองยาวเกิน 40 ตัวอักษร"
+    if discount_type not in ("percent", "fixed"):
+        return False, "กรุณาเลือกประเภทส่วนลด"
+    try:
+        value = float(discount_value)
+    except (TypeError, ValueError):
+        return False, "มูลค่าส่วนลดต้องเป็นตัวเลข"
+    if not math.isfinite(value) or value <= 0:
+        return False, "มูลค่าส่วนลดต้องมากกว่า 0"
+    if discount_type == "percent" and value > 100:
+        return False, "ส่วนลดเปอร์เซ็นต์ต้องไม่เกิน 100"
+    expiry = (valid_until or "").strip() or None
+    if expiry:
+        try:
+            expiry_date = date.fromisoformat(expiry)
+        except ValueError:
+            return False, "วันหมดอายุต้องอยู่ในรูปแบบ YYYY-MM-DD"
+        if expiry_date < date.today():
+            return False, "วันหมดอายุต้องไม่เป็นวันที่ผ่านมาแล้ว"
+    usage_limit = None
+    if (max_uses or "").strip():
+        try:
+            usage_limit = int(max_uses)
+        except (TypeError, ValueError):
+            return False, "จำนวนครั้งที่ใช้ได้ต้องเป็นจำนวนเต็ม"
+        if usage_limit <= 0:
+            return False, "จำนวนครั้งที่ใช้ได้ต้องมากกว่า 0"
+    if database.fetch_coupon(code) is not None:
+        return False, "มีรหัสคูปองนี้อยู่แล้ว"
+    database.insert_coupon(code, discount_type, value, expiry, usage_limit)
+    return True, f"เพิ่มคูปอง {code} เรียบร้อย"
+
+
+# ---------- ซ่อมบำรุงเครื่อง ----------
+@_safe
+def report_console_issue(console_id, issue):
+    issue = (issue or "").strip()
+    if not issue:
+        return False, "กรุณาระบุอาการเสีย"
+    if database.create_maintenance_record(console_id, issue) is None:
+        return False, "เครื่องนี้ไม่มีอยู่ หรือยังไม่ว่างสำหรับแจ้งซ่อม"
+    return True, "บันทึกงานซ่อมแล้ว และนำเครื่องออกจากรายการพร้อมให้เช่า"
+
+
+@_safe
+def complete_console_repair(maintenance_id, repair_cost, notes=""):
+    try:
+        cost = float(repair_cost)
+    except (TypeError, ValueError):
+        return False, "ค่าซ่อมต้องเป็นตัวเลข"
+    if not math.isfinite(cost) or cost < 0:
+        return False, "ค่าซ่อมต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป"
+    if not database.complete_maintenance_record(
+            maintenance_id, cost, (notes or "").strip()):
+        return False, "ไม่พบงานซ่อม หรือรายการนี้ปิดงานไปแล้ว"
+    return True, "บันทึกซ่อมเสร็จแล้ว เครื่องกลับมาพร้อมให้เช่า"
+
+
+# ---------- เพิ่มอุปกรณ์เสริม ----------
+@_safe
+def add_accessory(name, platform, daily_rate, quantity_total):
+    name = (name or "").strip()
+    platform = (platform or "").strip()
+    if not name:
+        return False, "กรุณากรอกชื่ออุปกรณ์"
+    if not platform:
+        return False, "กรุณาเลือกแพลตฟอร์มของอุปกรณ์"
+    try:
+        rate = float(daily_rate)
+    except (TypeError, ValueError):
+        return False, "ราคาต่อวันต้องเป็นตัวเลข"
+    if not math.isfinite(rate) or rate < 0:
+        return False, "ราคาต่อวันต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป"
+    try:
+        quantity = int(quantity_total)
+    except (TypeError, ValueError):
+        return False, "จำนวนอุปกรณ์ต้องเป็นจำนวนเต็ม"
+    if quantity <= 0:
+        return False, "จำนวนอุปกรณ์ต้องมากกว่า 0"
+    if any(item["name"].lower() == name.lower()
+           for item in database.fetch_all_accessories()):
+        return False, "มีอุปกรณ์ชื่อนี้อยู่แล้ว"
+    database.insert_accessory(name, platform, rate, quantity)
+    return True, f"เพิ่มอุปกรณ์ {name} เรียบร้อย"
+
+
 # ---------- เพิ่มเครื่อง ----------
 @_safe
 def add_console(name, platform, daily_rate):
@@ -96,8 +227,25 @@ def add_console(name, platform, daily_rate):
 
 
 # ---------- เช่าเครื่อง ----------
+def _normalize_accessories(accessories):
+    """รวมรายการอุปกรณ์ซ้ำให้เหลือหนึ่งรายการต่อชนิด และต้องมีจำนวนมากกว่าศูนย์"""
+    quantities = {}
+    try:
+        for item in accessories or []:
+            accessory_id = int(item["accessory_id"])
+            quantity = int(item["quantity"])
+            if quantity <= 0:
+                return None
+            quantities[accessory_id] = quantities.get(accessory_id, 0) + quantity
+    except (KeyError, TypeError, ValueError):
+        return None
+    return [{"accessory_id": accessory_id, "quantity": quantity}
+            for accessory_id, quantity in sorted(quantities.items())]
+
+
 @_safe
-def validate_rental(console_id, customer_name, phone, days):
+def validate_rental(console_id, customer_name, phone, days, accessories=None,
+                    coupon_code=None):
     customer_name = (customer_name or "").strip()
     phone = (phone or "").strip()
     if not customer_name:
@@ -115,12 +263,36 @@ def validate_rental(console_id, customer_name, phone, days):
         return False, "ไม่พบเครื่องนี้ในระบบ"
     if console["status"] != "available":
         return False, "เครื่องนี้ถูกเช่าอยู่ ยังไม่ว่าง"
+    # ตรวจในชั้น logic ด้วย และตรวจสต็อกซ้ำในฐานข้อมูลก่อนบันทึกรายการจริง
+    selected_accessories = _normalize_accessories(accessories)
+    if selected_accessories is None:
+        return False, "จำนวนอุปกรณ์เสริมไม่ถูกต้อง"
+    available_accessories = {
+        item["accessory_id"]: item for item in database.fetch_all_accessories()
+        if item["active"]
+    }
+    for item in selected_accessories:
+        accessory = available_accessories.get(item["accessory_id"])
+        if accessory is None:
+            return False, "ไม่พบอุปกรณ์เสริมนี้ในระบบ"
+        if accessory["platform"] and accessory["platform"] != console["platform"]:
+            return False, f"อุปกรณ์ {accessory['name']} ใช้กับเครื่องนี้ไม่ได้"
+        if item["quantity"] > accessory["quantity_available"]:
+            return False, f"อุปกรณ์ {accessory['name']} มีไม่พอตามจำนวนที่เลือก"
+    coupon_ok, coupon_message, _ = _get_usable_coupon(coupon_code)
+    if not coupon_ok:
+        return False, coupon_message
     return True, ""
 
 
 @_safe
-def add_rental(console_id, customer_name, phone, days):
-    ok, message = validate_rental(console_id, customer_name, phone, days)
+def add_rental(console_id, customer_name, phone, days, accessories=None,
+               coupon_code=None):
+    selected_accessories = _normalize_accessories(accessories)
+    if selected_accessories is None:
+        return False, "จำนวนอุปกรณ์เสริมไม่ถูกต้อง"
+    ok, message = validate_rental(
+        console_id, customer_name, phone, days, selected_accessories, coupon_code)
     if not ok:
         return False, message
 
@@ -128,17 +300,39 @@ def add_rental(console_id, customer_name, phone, days):
     phone = phone.strip()
     days = int(days)
     console = database.fetch_console(console_id)
+    accessories_by_id = {
+        item["accessory_id"]: item for item in database.fetch_all_accessories()
+    }
+    # คำนวณราคาโดยประมาณจากค่าเช่าต่อวันปัจจุบันของอุปกรณ์ที่เลือก
+    accessory_total = sum(
+        accessories_by_id[item["accessory_id"]]["daily_rate"] * item["quantity"] * days
+        for item in selected_accessories
+    )
+    coupon_ok, coupon_message, coupon = _get_usable_coupon(coupon_code)
+    if not coupon_ok:
+        return False, coupon_message
 
     today = date.today()
     due = today + timedelta(days=days)
     rental_id = database.create_rental_transaction(
-        console_id, customer_name, phone, today.isoformat(), due.isoformat())
+        console_id, customer_name, phone, today.isoformat(), due.isoformat(),
+        accessories=selected_accessories,
+        coupon_code=coupon["code"] if coupon else None)
     if rental_id is None:
-        return False, "เครื่องนี้ไม่ว่างแล้ว กรุณารีเฟรชรายการเครื่อง"
+        return False, "เครื่อง อุปกรณ์ หรือคูปองไม่พร้อมใช้แล้ว กรุณารีเฟรชแล้วลองอีกครั้ง"
 
-    estimate = console["daily_rate"] * days
-    return True, (f"เช่า {console['name']} เป็นเวลา {days} วัน เรียบร้อย\n"
-                  f"กำหนดคืน {due.isoformat()}  ราคาโดยประมาณ {estimate:,.0f} บาท")
+    base_estimate = console["daily_rate"] * days + accessory_total
+    discount = calculate_coupon_discount(
+        base_estimate, coupon["discount_type"], coupon["discount_value"]
+    ) if coupon else 0
+    estimate = base_estimate - discount
+    message = (f"เช่า {console['name']} เป็นเวลา {days} วัน เรียบร้อย\n"
+               f"กำหนดคืน {due.isoformat()}  ราคาโดยประมาณ {estimate:,.0f} บาท")
+    if selected_accessories:
+        message += f"\nรวมค่าอุปกรณ์เสริม {accessory_total:,.0f} บาท"
+    if coupon:
+        message += f"\nส่วนลดคูปอง {coupon['code']} -{discount:,.0f} บาท"
+    return True, message
 
 
 # ---------- คืนเครื่อง ----------
@@ -160,18 +354,28 @@ def return_console(rental_id):
         return False, "รายการนี้คืนเครื่องไปแล้ว"
 
     today = date.today()
+    # คิดค่าปรับจากค่าเช่าต่อวันรวมของเครื่องและอุปกรณ์เสริม
     total, used_days, late_days = calculate_total(
-        rental["daily_rate"],
+        rental["daily_rate"] + rental["accessory_daily_rate"],
         date.fromisoformat(rental["rent_date"]),
         date.fromisoformat(rental["due_date"]),
         today,
     )
+    discount = calculate_coupon_discount(
+        (rental["daily_rate"] + rental["accessory_daily_rate"]) * used_days,
+        rental["coupon_discount_type"],
+        rental["coupon_discount_value"],
+    )
+    total -= discount
     if not database.complete_rental_return(
-            rental_id, rental["console_id"], today.isoformat(), total):
+            rental_id, rental["console_id"], today.isoformat(), total, discount):
         return False, "รายการนี้ถูกคืนไปแล้ว หรือสถานะเครื่องไม่ถูกต้อง"
 
     message = f"คืน {rental['console_name']} เรียบร้อย\nใช้งาน {used_days} วัน"
     if late_days:
         message += f" (เกินกำหนด {late_days} วัน มีค่าปรับ)"
+    if discount:
+        message += f"\nส่วนลดคูปอง {rental['coupon_code']} -{discount:,.0f} บาท"
     message += f"\nราคารวม {total:,.0f} บาท"
     return True, message
+
