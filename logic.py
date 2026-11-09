@@ -378,4 +378,3 @@ def return_console(rental_id):
         message += f"\nส่วนลดคูปอง {rental['coupon_code']} -{discount:,.0f} บาท"
     message += f"\nราคารวม {total:,.0f} บาท"
     return True, message
-
