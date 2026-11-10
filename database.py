@@ -510,7 +510,7 @@ def fetch_public_rental_by_access_code_hash(access_code_hash):
     with _cursor() as cur:
         cur.execute(
             "SELECT c.name AS console_name, c.platform, r.rent_date, r.due_date, "
-            "r.return_date, r.return_requested_at, "
+            "r.return_date, r.return_requested_at, r.total_price, "
             "COALESCE((SELECT STRING_AGG(a.name || ' x ' || ra.quantity::TEXT, ', ' "
             "ORDER BY a.name) FROM rental_accessories ra "
             "JOIN accessories a ON a.accessory_id = ra.accessory_id "
