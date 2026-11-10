@@ -1,12 +1,13 @@
 """Flet desktop UI for the game rental application."""
-from io import BytesIO
+import html
 import os
+import tempfile
+import webbrowser
 from datetime import date
+from pathlib import Path
 
 import flet as ft
-import qrcode
 
-import customer_links
 import logic
 
 PLATFORMS = ["PS5", "PS4", "Xbox Series X", "Xbox One", "Nintendo Switch", "Steam Deck"]
@@ -47,6 +48,7 @@ def rental_status(rental):
     return "กำลังเช่า"
 
 
+# ---------- แอปหลักและการตั้งค่าหน้าต่าง ----------
 class RentalApp:
     def __init__(self, page: ft.Page):
         self.page = page
@@ -70,6 +72,7 @@ class RentalApp:
         self.open_staff_pin_dialog()
 
     def load_window_icon(self):
+        """โหลดไอคอนของหน้าต่างจากไฟล์ ICO หรือ PNG ที่มีอยู่"""
         icon_png = os.path.abspath("icon.png")
         icon_ico = os.path.abspath("icon.ico")
 
@@ -92,6 +95,7 @@ class RentalApp:
         except Exception:
             pass
 
+    # ---------- โครงหน้า เมนู และส่วนประกอบที่ใช้ร่วมกัน ----------
     def render(self):
         self.page.clean()
         self.page.add(self.header())
@@ -269,6 +273,7 @@ class RentalApp:
         )
 
     def staff_consoles_view(self):
+        """แสดงจำนวนเครื่องทั้งหมด เครื่องว่าง เครื่องเช่า และเครื่องซ่อม"""
         self.consoles = logic.get_all_consoles()
         available_count = sum(console["status"] == "available" for console in self.consoles)
         rented_count = sum(console["status"] == "rented" for console in self.consoles)
@@ -320,10 +325,12 @@ class RentalApp:
             expand=True,
         )
 
+    # ---------- ทำรายการเช่า ----------
     def staff_rent_view(self):
         return self.rent_form()
 
     def rent_form(self):
+        """สร้างฟอร์มเช่าเครื่องและอุปกรณ์เสริมสำหรับพนักงาน"""
         self.available_consoles = logic.get_available_consoles()
         self.available_accessories = [
             item for item in logic.get_all_accessories()
@@ -493,23 +500,115 @@ class RentalApp:
             for accessory_id, selected, quantity, _, _ in self.rent_accessory_fields
             if selected.value
         ]
-        customer_access_code = logic.generate_customer_access_code()
-        ok, message = logic.add_rental(
+        ok, message, receipt = logic.add_rental(
             console_id,
             name_field.value.strip(),
             phone_field.value.strip(),
             days_field.value.strip(),
             accessories=accessories,
             coupon_code=self.coupon_code_field.value,
-            customer_access_code=customer_access_code,
         )
         if not ok:
             self.show_message(message, error=True)
             return
         self.view_index = 0
         self.render()
-        self.show_rental_success(message, customer_access_code)
+        self.show_rental_confirmation(message, receipt)
 
+    def show_rental_confirmation(self, message, receipt):
+        """แสดงรายละเอียดใบยืนยันหลังบันทึกรายการเช่าสำเร็จ"""
+        accessories = receipt["accessories"]
+        accessory_text = (", ".join(
+            f"{item['name']} x {item['quantity']}" for item in accessories
+        ) if accessories else "ไม่มี")
+        coupon_text = (f"คูปอง {receipt['coupon_code']} (-{receipt['discount_amount']:,.0f} บาท)"
+                       if receipt["coupon_code"] else "ไม่มีคูปอง")
+        self.page.show_dialog(
+            ft.AlertDialog(
+                modal=True,
+                title=ft.Text("ใบยืนยันการเช่า"),
+                content=ft.Column(
+                    [
+                        ft.Text(f"รหัสรายการ: {receipt['rental_id']}"),
+                        ft.Text(f"ลูกค้า: {receipt['customer_name']}"),
+                        ft.Text(f"เบอร์โทร: {receipt['phone']}"),
+                        ft.Text(f"เครื่อง: {receipt['console_name']}"),
+                        ft.Text(f"อุปกรณ์เสริม: {accessory_text}"),
+                        ft.Text(f"วันที่เช่า: {receipt['rent_date']}"),
+                        ft.Text(f"กำหนดคืน: {receipt['due_date']} ({receipt['days']} วัน)"),
+                        ft.Text(coupon_text),
+                        ft.Text(f"ยอดประมาณ: {receipt['estimated_total']:,.0f} บาท",
+                                weight=ft.FontWeight.BOLD),
+                        ft.Text("ใบยืนยันการเช่า ไม่ใช่ใบเสร็จรับเงิน; ยอดจริงคำนวณตอนคืน",
+                                size=12, color=MUTED),
+                    ],
+                    tight=True,
+                    spacing=8,
+                ),
+                actions=[
+                    ft.TextButton("ปิด", on_click=self.page.pop_dialog),
+                    ft.FilledButton(
+                        "พิมพ์ / บันทึก PDF",
+                        icon=ft.Icons.PRINT,
+                        on_click=lambda event: self.print_rental_confirmation(receipt),
+                    ),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            )
+        )
+
+    def print_rental_confirmation(self, receipt):
+        """เปิดใบยืนยัน HTML ใน browser เพื่อพิมพ์หรือบันทึกเป็น PDF"""
+        accessory_items = "".join(
+            f"<li>{html.escape(item['name'])} x {item['quantity']}</li>"
+            for item in receipt["accessories"]
+        ) or "<li>ไม่มี</li>"
+        coupon_text = (html.escape(receipt["coupon_code"])
+                       if receipt["coupon_code"] else "ไม่มี")
+        discount_text = f"{receipt['discount_amount']:,.0f} บาท"
+        document = f"""<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <title>ใบยืนยันการเช่า #{receipt['rental_id']}</title>
+  <style>
+    body {{ font-family: Tahoma, sans-serif; color: #17231e; margin: 36px; }}
+    main {{ max-width: 700px; margin: 0 auto; border: 1px solid #8a9b91; padding: 28px; }}
+    h1 {{ color: #1c5949; margin-top: 0; }}
+    .id {{ font-size: 20px; font-weight: bold; }}
+    .total {{ font-size: 20px; font-weight: bold; border-top: 1px solid #c8d1cb; padding-top: 12px; }}
+    .note {{ color: #52635a; font-size: 13px; margin-top: 24px; }}
+    @media print {{ body {{ margin: 0; }} main {{ border: 0; }} }}
+  </style>
+</head>
+<body onload="window.print()">
+  <main>
+    <h1>ใบยืนยันการเช่าเครื่องเกม</h1>
+    <p class="id">รหัสรายการ: {receipt['rental_id']}</p>
+    <p>ลูกค้า: {html.escape(receipt['customer_name'])}</p>
+    <p>เบอร์โทร: {html.escape(receipt['phone'])}</p>
+    <p>เครื่อง: {html.escape(receipt['console_name'])}</p>
+    <p>อุปกรณ์เสริม:</p>
+    <ul>{accessory_items}</ul>
+    <p>วันที่เช่า: {receipt['rent_date']}</p>
+    <p>กำหนดคืน: {receipt['due_date']} ({receipt['days']} วัน)</p>
+    <p>คูปอง: {coupon_text} (-{discount_text})</p>
+    <p class="total">ยอดประมาณ: {receipt['estimated_total']:,.0f} บาท</p>
+    <p class="note">เอกสารนี้เป็นใบยืนยันการเช่า ไม่ใช่ใบเสร็จรับเงิน
+    ยอดค่าเช่าจริงและค่าปรับ (ถ้ามี) คำนวณเมื่อคืนเครื่อง</p>
+  </main>
+</body>
+</html>"""
+        # Escape ข้อมูลลูกค้าก่อนใส่ HTML เพื่อไม่ให้ข้อความถูกตีความเป็น markup
+        with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".html", delete=False) as file:
+            file.write(document)
+            receipt_path = Path(file.name)
+        self.page.pop_dialog()
+        if not webbrowser.open_new_tab(receipt_path.as_uri()):
+            self.show_message("เปิดหน้าพิมพ์ไม่สำเร็จ กรุณาลองอีกครั้ง", error=True)
+
+    # ---------- รับคืนเครื่องและดูประวัติ ----------
     def staff_returns_view(self):
         self.rentals = logic.get_all_rentals()
         active = [rental for rental in self.rentals if rental.get("return_date") is None]
@@ -635,6 +734,7 @@ class RentalApp:
             expand=True,
         )
 
+    # ---------- เพิ่มเครื่องและจัดการอุปกรณ์เสริม ----------
     def staff_add_console_view(self):
         self.new_console_name = ft.TextField(label="ชื่อเครื่อง", width=520)
         self.new_console_platform = ft.Dropdown(
@@ -755,6 +855,7 @@ class RentalApp:
         if ok:
             self.render_view()
 
+    # ---------- แจ้งซ่อมและปิดงานซ่อม ----------
     def staff_maintenance_view(self):
         consoles = [console for console in logic.get_all_consoles()
                     if console["status"] == "available"]
@@ -868,6 +969,7 @@ class RentalApp:
             )
         )
 
+    # ---------- สร้างและตรวจสอบคูปอง ----------
     def staff_coupons_view(self):
         coupons = logic.get_all_coupons()
         self.new_coupon_code = ft.TextField(label="รหัสคูปอง", width=520)
@@ -946,6 +1048,7 @@ class RentalApp:
         if ok:
             self.render_view()
 
+    # ---------- PIN, กล่องโต้ตอบ และการตั้งค่าทั่วไป ----------
     def confirm(self, title, message, action):
         def close_dialog():
             self.page.pop_dialog()
@@ -1006,41 +1109,6 @@ class RentalApp:
                 modal=True,
                 title=ft.Text("ไม่สำเร็จ" if error else "เรียบร้อย"),
                 content=ft.Text(message),
-                actions=[ft.TextButton("ตกลง", on_click=self.page.pop_dialog)],
-            )
-        )
-
-    def show_rental_success(self, message, access_code):
-        content = [ft.Text(message)]
-        try:
-            customer_url = customer_links.rental_url(access_code)
-        except (OSError, ValueError) as error:
-            content.append(
-                ft.Text(
-                    f"สร้าง QR ไม่สำเร็จ: {error}\n"
-                    "แจ้งรหัสด้านบนให้ลูกค้า และตรวจสอบการตั้งค่า URL ของหน้าเว็บ",
-                    color=WARN,
-                )
-            )
-        else:
-            qr_image = qrcode.make(customer_url)
-            image_data = BytesIO()
-            qr_image.save(image_data, format="PNG")
-            content.extend([
-                ft.Text("ให้ลูกค้าสแกน QR นี้เพื่อเปิดรายการเช่า", color=MUTED),
-                ft.Image(
-                    src=image_data.getvalue(),
-                    width=220,
-                    height=220,
-                    fit=ft.BoxFit.CONTAIN,
-                ),
-                ft.Text(customer_url, size=11, color=MUTED, selectable=True),
-            ])
-        self.page.show_dialog(
-            ft.AlertDialog(
-                modal=True,
-                title=ft.Text("ทำรายการเช่าสำเร็จ"),
-                content=ft.Column(content, tight=True, scroll=ft.ScrollMode.AUTO),
                 actions=[ft.TextButton("ตกลง", on_click=self.page.pop_dialog)],
             )
         )
