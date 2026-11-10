@@ -1,9 +1,12 @@
 """Flet desktop UI for the game rental application."""
+from io import BytesIO
 import os
 from datetime import date
 
 import flet as ft
+import qrcode
 
+import customer_links
 import logic
 
 PLATFORMS = ["PS5", "PS4", "Xbox Series X", "Xbox One", "Nintendo Switch", "Steam Deck"]
@@ -490,6 +493,7 @@ class RentalApp:
             for accessory_id, selected, quantity, _, _ in self.rent_accessory_fields
             if selected.value
         ]
+        customer_access_code = logic.generate_customer_access_code()
         ok, message = logic.add_rental(
             console_id,
             name_field.value.strip(),
@@ -497,13 +501,14 @@ class RentalApp:
             days_field.value.strip(),
             accessories=accessories,
             coupon_code=self.coupon_code_field.value,
+            customer_access_code=customer_access_code,
         )
         if not ok:
             self.show_message(message, error=True)
             return
-        self.show_message(message)
         self.view_index = 0
         self.render()
+        self.show_rental_success(message, customer_access_code)
 
     def staff_returns_view(self):
         self.rentals = logic.get_all_rentals()
@@ -1001,6 +1006,41 @@ class RentalApp:
                 modal=True,
                 title=ft.Text("ไม่สำเร็จ" if error else "เรียบร้อย"),
                 content=ft.Text(message),
+                actions=[ft.TextButton("ตกลง", on_click=self.page.pop_dialog)],
+            )
+        )
+
+    def show_rental_success(self, message, access_code):
+        content = [ft.Text(message)]
+        try:
+            customer_url = customer_links.rental_url(access_code)
+        except (OSError, ValueError) as error:
+            content.append(
+                ft.Text(
+                    f"สร้าง QR ไม่สำเร็จ: {error}\n"
+                    "แจ้งรหัสด้านบนให้ลูกค้า และตรวจสอบการตั้งค่า URL ของหน้าเว็บ",
+                    color=WARN,
+                )
+            )
+        else:
+            qr_image = qrcode.make(customer_url)
+            image_data = BytesIO()
+            qr_image.save(image_data, format="PNG")
+            content.extend([
+                ft.Text("ให้ลูกค้าสแกน QR นี้เพื่อเปิดรายการเช่า", color=MUTED),
+                ft.Image(
+                    src=image_data.getvalue(),
+                    width=220,
+                    height=220,
+                    fit=ft.BoxFit.CONTAIN,
+                ),
+                ft.Text(customer_url, size=11, color=MUTED, selectable=True),
+            ])
+        self.page.show_dialog(
+            ft.AlertDialog(
+                modal=True,
+                title=ft.Text("ทำรายการเช่าสำเร็จ"),
+                content=ft.Column(content, tight=True, scroll=ft.ScrollMode.AUTO),
                 actions=[ft.TextButton("ตกลง", on_click=self.page.pop_dialog)],
             )
         )
