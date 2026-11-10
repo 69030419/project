@@ -38,7 +38,7 @@ class CustomerRentalPage:
         self.page.title = "ตรวจสอบรายการเช่า | GAME RENTAL"
         self.page.theme_mode = ft.ThemeMode.DARK
         self.page.bgcolor = BG
-        self.page.padding = ft.padding.all(16)
+        self.page.padding = 16
         self.page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
         self.page.scroll = ft.ScrollMode.AUTO
 
@@ -81,7 +81,7 @@ class CustomerRentalPage:
                         [
                             ft.Icon(ft.Icons.SPORTS_ESPORTS, color=BRAND_GREEN, size=28),
                             ft.Text("GAME RENTAL", size=22, weight=ft.FontWeight.BOLD,
-                                    color=TEXT_MAIN, letter_spacing=1.5),
+                                    color=TEXT_MAIN),
                         ],
                         alignment=ft.MainAxisAlignment.CENTER,
                         spacing=10,
@@ -96,7 +96,7 @@ class CustomerRentalPage:
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=4,
             ),
-            padding=ft.padding.only(top=10, bottom=16),
+            padding=ft.Padding.only(top=10, bottom=16),
         )
 
         # Centered main wrapper (max-width 480px on desktop/tablet)
@@ -132,7 +132,7 @@ class CustomerRentalPage:
                                      ft.ControlState.HOVERED: "#059669"},
                             color=TEXT_MAIN,
                             shape=ft.RoundedRectangleBorder(radius=12),
-                            padding=ft.padding.symmetric(vertical=16, horizontal=24),
+                            padding=ft.Padding.symmetric(vertical=16, horizontal=24),
                         ),
                         width=400,
                         on_click=lambda _: self.lookup_rental(),
@@ -142,7 +142,7 @@ class CustomerRentalPage:
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             bgcolor=SURFACE,
-            border=ft.border.all(1, BORDER),
+            border=ft.Border.all(1, BORDER),
             border_radius=16,
             padding=20,
         )
@@ -251,18 +251,18 @@ class CustomerRentalPage:
                         content=ft.Text(badge_text, size=12, weight=ft.FontWeight.BOLD,
                                         color=status_color),
                         bgcolor=status_bg,
-                        padding=ft.padding.symmetric(horizontal=12, vertical=4),
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=4),
                         border_radius=20,
-                        border=ft.border.all(1, status_border),
+                        border=ft.Border.all(1, status_border),
                     ),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=8,
             ),
             bgcolor=SURFACE_CARD,
-            padding=ft.padding.symmetric(vertical=20, horizontal=16),
+            padding=ft.Padding.symmetric(vertical=20, horizontal=16),
             border_radius=16,
-            border=ft.border.all(1, BORDER),
+            border=ft.Border.all(1, BORDER),
         )
 
         # 2. ข้อมูลเครื่องเกม & แพลตฟอร์ม
@@ -277,7 +277,7 @@ class CustomerRentalPage:
                                                 color=BRAND_GREEN_LIGHT,
                                                 weight=ft.FontWeight.BOLD),
                                 bgcolor=BRAND_GREEN_BG,
-                                padding=ft.padding.symmetric(horizontal=8, vertical=2),
+                                padding=ft.Padding.symmetric(horizontal=8, vertical=2),
                                 border_radius=6,
                             ),
                         ],
@@ -291,7 +291,7 @@ class CustomerRentalPage:
             bgcolor=SURFACE_CARD,
             padding=16,
             border_radius=14,
-            border=ft.border.all(1, BORDER),
+            border=ft.Border.all(1, BORDER),
         )
 
         # 3. ข้อมูลวันที่ (Timeline Card)
@@ -312,7 +312,7 @@ class CustomerRentalPage:
             bgcolor=SURFACE_CARD,
             padding=16,
             border_radius=14,
-            border=ft.border.all(1, BORDER),
+            border=ft.Border.all(1, BORDER),
         )
 
         # 4. อุปกรณ์เสริม (ถ้ามี)
@@ -336,7 +336,7 @@ class CustomerRentalPage:
                 bgcolor=SURFACE_CARD,
                 padding=16,
                 border_radius=14,
-                border=ft.border.all(1, BORDER),
+                border=ft.Border.all(1, BORDER),
             )
 
         # 5. สรุปยอดเงิน (เมื่อคืนเครื่องเรียบร้อยแล้ว - ทำเป็น Digital Receipt)
@@ -361,7 +361,7 @@ class CustomerRentalPage:
                 bgcolor="#064e3b33",
                 padding=18,
                 border_radius=14,
-                border=ft.border.all(1, BRAND_GREEN),
+                border=ft.Border.all(1, BRAND_GREEN),
             )
 
         # 6. รหัสอ้างอิงท้ายบัตร
@@ -374,7 +374,7 @@ class CustomerRentalPage:
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
-            padding=ft.padding.symmetric(horizontal=6, vertical=4),
+            padding=ft.Padding.symmetric(horizontal=6, vertical=4),
         )
 
         ticket_items = [
@@ -393,7 +393,7 @@ class CustomerRentalPage:
             bgcolor=SURFACE,
             padding=16,
             border_radius=20,
-            border=ft.border.all(1, BORDER),
+            border=ft.Border.all(1, BORDER),
             shadow=ft.BoxShadow(
                 spread_radius=1,
                 blur_radius=20,
@@ -432,7 +432,7 @@ class CustomerRentalPage:
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=2,
             ),
-            padding=ft.padding.symmetric(vertical=16),
+            padding=ft.Padding.symmetric(vertical=16),
         )
 
 
