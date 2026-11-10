@@ -1,4 +1,4 @@
-"""Build customer portal links that can be used from the shop's local network."""
+"""Build customer portal links that can be used from the shop's local network or cloud."""
 import os
 import socket
 from urllib.parse import urlencode, urlparse
@@ -9,6 +9,13 @@ CUSTOMER_WEB_PORT = 8550
 
 def customer_web_base_url():
     configured_url = os.environ.get("CUSTOMER_WEB_URL", "").strip()
+    if not configured_url:
+        try:
+            import db_config
+            configured_url = getattr(db_config, "CUSTOMER_WEB_URL", "").strip()
+        except Exception:
+            pass
+
     if configured_url:
         parsed_url = urlparse(configured_url)
         if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
