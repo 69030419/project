@@ -1,9 +1,12 @@
 """Flet desktop UI for the game rental application."""
+from io import BytesIO
 import os
 from datetime import date
 
 import flet as ft
+import qrcode
 
+import customer_links
 import logic
 
 PLATFORMS = ["PS5", "PS4", "Xbox Series X", "Xbox One", "Nintendo Switch", "Steam Deck"]
@@ -47,11 +50,8 @@ def rental_status(rental):
 class RentalApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.mode = None
         self.view_index = 0
         self.selected_rental_id = None
-        self.customer_lookup_phone = ""
-        self.customer_rentals = []
         self.rentals = []
         self.consoles = []
         self.available_consoles = []
@@ -67,7 +67,7 @@ class RentalApp:
         page.padding = 0
         page.spacing = 0
         self.load_window_icon()
-        self.render()
+        self.open_staff_pin_dialog()
 
     def load_window_icon(self):
         icon_png = os.path.abspath("icon.png")
@@ -95,11 +95,6 @@ class RentalApp:
     def render(self):
         self.page.clean()
         self.page.add(self.header())
-        if self.mode is None:
-            self.page.add(self.mode_picker())
-            self.page.update()
-            return
-
         destinations = self.destinations()
         self.rail = ft.NavigationRail(
             selected_index=self.view_index,
@@ -122,16 +117,8 @@ class RentalApp:
         self.render_view()
 
     def header(self):
-        mode_text = "เลือกโหมด" if self.mode is None else (
-            "โหมดลูกค้า" if self.mode == "customer" else "โหมดพนักงาน"
-        )
         actions = [
-            ft.TextButton(
-                mode_text,
-                icon=ft.Icons.SWAP_HORIZ,
-                on_click=self.show_mode_picker,
-                style=ft.ButtonStyle(color=INK),
-            ),
+            ft.Text("โหมดพนักงาน", color=INK),
             ft.IconButton(
                 icon=ft.Icons.LIGHT_MODE if self.theme_mode == ft.ThemeMode.DARK else ft.Icons.DARK_MODE,
                 tooltip="สลับธีม",
@@ -160,87 +147,17 @@ class RentalApp:
             padding=ft.Padding(left=26, top=14, right=18, bottom=14),
         )
 
-    def mode_picker(self):
-        customer_card = self.mode_card(
-            "สำหรับลูกค้า",
-            "เช่าเครื่องเกม",
-            "ดูเครื่องที่ว่าง เช่าเครื่อง และติดตามรายการเช่าของคุณ",
-            ft.Icons.SPORTS_ESPORTS,
-            "เข้าใช้งาน",
-            self.enter_customer_mode,
-            GOOD,
-        )
-        staff_card = self.mode_card(
-            "สำหรับพนักงาน",
-            "จัดการหน้าร้าน",
-            "จัดการเครื่อง การเช่า การคืน และประวัติ",
-            ft.Icons.STORE,
-            "เข้าสู่ระบบพนักงาน",
-            self.open_staff_pin_dialog,
-            ACCENT,
-        )
-        return ft.Container(
-            content=ft.Column(
-                [
-                    ft.Container(height=18),
-                    ft.Text("ยินดีต้อนรับ", size=32, weight=ft.FontWeight.BOLD, color=INK),
-                    ft.Text("เลือกโหมดการใช้งาน", size=15, color=MUTED),
-                    ft.Container(height=16),
-                    ft.Row([customer_card, staff_card], spacing=18, expand=True),
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=8,
-                expand=True,
-            ),
-            padding=ft.Padding(left=32, top=28, right=32, bottom=32),
-            expand=True,
-            bgcolor=BG,
-        )
-
-    def mode_card(self, eyebrow, title, description, icon, button_text, action, accent):
-        return ft.Container(
-            content=ft.Column(
-                [
-                    ft.Container(
-                        content=ft.Icon(icon, size=28, color=accent),
-                        width=54,
-                        height=54,
-                        alignment=ft.Alignment.CENTER,
-                        bgcolor=SURFACE_ALT,
-                        border_radius=16,
-                    ),
-                    ft.Text(eyebrow.upper(), size=11, weight=ft.FontWeight.BOLD, color=accent),
-                    ft.Text(title, size=24, weight=ft.FontWeight.BOLD, color=INK),
-                    ft.Text(description, size=14, color=MUTED),
-                    ft.Container(expand=True),
-                    ft.FilledButton(button_text, icon=ft.Icons.ARROW_FORWARD, on_click=action),
-                ],
-                spacing=12,
-                expand=True,
-            ),
-            padding=28,
-            bgcolor=SURFACE,
-            border=ft.Border.all(1, LINE),
-            border_radius=18,
-            expand=True,
-        )
-
     def destinations(self):
-        if self.mode == "customer":
-            items = [
-                (ft.Icons.VIDEOGAME_ASSET, "เครื่องว่าง"),
-                (ft.Icons.ADD_SHOPPING_CART, "เช่าเครื่อง"),
-                (ft.Icons.RECEIPT_LONG, "รายการของฉัน"),
-            ]
-        else:
-            items = [
-                (ft.Icons.INVENTORY_2, "รายการเครื่อง"),
-                (ft.Icons.ADD_SHOPPING_CART, "เช่าเครื่อง"),
-                (ft.Icons.ASSIGNMENT_RETURN, "คืนเครื่อง"),
-                (ft.Icons.HISTORY, "ประวัติ"),
-                (ft.Icons.ADD, "เพิ่มเครื่อง"),
-                (ft.Icons.EXTENSION, "อุปกรณ์เสริม"),
-            ]
+        items = [
+            (ft.Icons.INVENTORY_2, "รายการเครื่อง"),
+            (ft.Icons.ADD_SHOPPING_CART, "เช่าเครื่อง"),
+            (ft.Icons.ASSIGNMENT_RETURN, "คืนเครื่อง"),
+            (ft.Icons.HISTORY, "ประวัติ"),
+            (ft.Icons.ADD, "เพิ่มเครื่อง"),
+            (ft.Icons.EXTENSION, "อุปกรณ์เสริม"),
+            (ft.Icons.BUILD, "ซ่อมบำรุง"),
+            (ft.Icons.LOCAL_OFFER, "คูปอง"),
+        ]
         return [ft.NavigationRailDestination(icon=icon, label=label) for icon, label in items]
 
     def on_navigation_change(self, event):
@@ -261,12 +178,10 @@ class RentalApp:
             print(f"UI data refresh failed: {error}")
 
     def build_view(self):
-        if self.mode == "customer":
-            return [self.customer_available_view, self.customer_rent_view,
-                    self.customer_rentals_view][self.view_index]()
         return [self.staff_consoles_view, self.staff_rent_view, self.staff_returns_view,
             self.staff_history_view, self.staff_add_console_view,
-            self.staff_accessories_view][self.view_index]()
+            self.staff_accessories_view, self.staff_maintenance_view,
+            self.staff_coupons_view][self.view_index]()
 
     def page_heading(self, title, subtitle, refresh=True):
         controls = [
@@ -323,18 +238,23 @@ class RentalApp:
             values = [console["console_id"], console["name"], console["platform"],
                       f"{console['daily_rate']:,.0f} บาท"]
             if include_status:
-                values.append("ว่าง" if console["status"] == "available" else "ถูกเช่า")
+                status_labels = {
+                    "available": "ว่าง",
+                    "rented": "ถูกเช่า",
+                    "maintenance": "กำลังซ่อม",
+                }
+                values.append(status_labels.get(console["status"], console["status"]))
             rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(str(value), color=INK))
                                           for value in values]))
         return self.data_table(columns, rows)
 
-    def data_table(self, columns, rows, selectable=False):
+    def data_table(self, columns, rows):
         return ft.Row(
             [
                 ft.DataTable(
                     columns=columns,
                     rows=rows,
-                    show_checkbox_column=selectable,
+                    show_checkbox_column=False,
                     border=ft.Border.all(1, LINE),
                     border_radius=12,
                     heading_row_color=SURFACE_ALT,
@@ -348,24 +268,18 @@ class RentalApp:
             scroll=ft.ScrollMode.AUTO,
         )
 
-    def customer_available_view(self):
-        self.available_consoles = logic.get_available_consoles()
-        content = [self.page_heading("เครื่องที่พร้อมให้เช่า", "เลือกเครื่องจากรายการและดูราคาเช่าต่อวัน")]
-        if self.available_consoles:
-            content.append(self.section(self.console_table(self.available_consoles)))
-        else:
-            content.append(self.empty_state("ตอนนี้ยังไม่มีเครื่องว่าง"))
-        return ft.Column(content, spacing=20, scroll=ft.ScrollMode.AUTO, expand=True)
-
     def staff_consoles_view(self):
         self.consoles = logic.get_all_consoles()
         available_count = sum(console["status"] == "available" for console in self.consoles)
-        rented_count = len(self.consoles) - available_count
+        rented_count = sum(console["status"] == "rented" for console in self.consoles)
+        maintenance_count = sum(
+            console["status"] == "maintenance" for console in self.consoles)
         summary = ft.Row(
             [
                 self.metric_card("เครื่องทั้งหมด", str(len(self.consoles)), ft.Icons.INVENTORY_2, ACCENT),
                 self.metric_card("ว่าง", str(available_count), ft.Icons.CHECK_CIRCLE, GOOD),
                 self.metric_card("ถูกเช่า", str(rented_count), ft.Icons.SCHEDULE, WARN),
+                self.metric_card("กำลังซ่อม", str(maintenance_count), ft.Icons.BUILD, BAD),
             ],
             spacing=14,
         )
@@ -406,13 +320,10 @@ class RentalApp:
             expand=True,
         )
 
-    def customer_rent_view(self):
-        return self.rent_form(customer=True)
-
     def staff_rent_view(self):
-        return self.rent_form(customer=False)
+        return self.rent_form()
 
-    def rent_form(self, customer):
+    def rent_form(self):
         self.available_consoles = logic.get_available_consoles()
         self.available_accessories = [
             item for item in logic.get_all_accessories()
@@ -422,8 +333,6 @@ class RentalApp:
             item["accessory_id"]: item for item in self.available_accessories
         }
         self.rent_accessory_fields = []
-        self.rate_by_id = {console["console_id"]: console["daily_rate"]
-                           for console in self.available_consoles}
         self.console_by_id = {console["console_id"]: console
                               for console in self.available_consoles}
         options = [
@@ -433,43 +342,31 @@ class RentalApp:
             )
             for console in self.available_consoles
         ]
-        if customer:
-            self.customer_console_field = ft.Dropdown(
-                label="เลือกเครื่อง",
-                options=options,
-                enable_search=True,
-                on_select=self.update_rent_estimate,
-                width=520,
-            )
-            self.customer_name_field = ft.TextField(label="ชื่อผู้เช่า", width=520)
-            self.customer_phone_field = ft.TextField(label="เบอร์โทร 10 หลัก", width=520,
-                                                     keyboard_type=ft.KeyboardType.PHONE)
-            self.customer_days_field = ft.TextField(label="จำนวนวัน", value="1", width=180,
-                                                    keyboard_type=ft.KeyboardType.NUMBER,
-                                                    on_change=self.update_rent_estimate)
-            self.customer_estimate = ft.Text("ราคาโดยประมาณ: -", size=17,
-                                             weight=ft.FontWeight.BOLD, color=WARN)
-        else:
-            self.staff_console_field = ft.Dropdown(
-                label="เลือกเครื่อง",
-                options=options,
-                enable_search=True,
-                on_select=self.update_rent_estimate,
-                width=520,
-            )
-            self.staff_name_field = ft.TextField(label="ชื่อลูกค้า", width=520)
-            self.staff_phone_field = ft.TextField(label="เบอร์โทร 10 หลัก", width=520,
-                                                  keyboard_type=ft.KeyboardType.PHONE)
-            self.staff_days_field = ft.TextField(label="จำนวนวัน", value="1", width=180,
-                                                 keyboard_type=ft.KeyboardType.NUMBER,
-                                                 on_change=self.update_rent_estimate)
-            self.staff_estimate = ft.Text("ราคาโดยประมาณ: -", size=17,
-                                          weight=ft.FontWeight.BOLD, color=WARN)
+        self.staff_console_field = ft.Dropdown(
+            label="เลือกเครื่อง",
+            options=options,
+            enable_search=True,
+            on_select=self.update_rent_estimate,
+            width=520,
+        )
+        self.staff_name_field = ft.TextField(label="ชื่อลูกค้า", width=520)
+        self.staff_phone_field = ft.TextField(label="เบอร์โทร 10 หลัก", width=520,
+                                              keyboard_type=ft.KeyboardType.PHONE)
+        self.coupon_code_field = ft.TextField(
+            label="รหัสคูปอง (ไม่บังคับ)",
+            width=520,
+        )
+        self.staff_days_field = ft.TextField(label="จำนวนวัน", value="1", width=180,
+                                             keyboard_type=ft.KeyboardType.NUMBER,
+                                             on_change=self.update_rent_estimate)
+        self.staff_estimate = ft.Text("ราคาโดยประมาณ: -", size=17,
+                                      weight=ft.FontWeight.BOLD, color=WARN)
 
         accessory_rows = []
         for accessory in self.available_accessories:
             selected = ft.Checkbox(
-                label=(f"{accessory['name']} · {accessory['daily_rate']:,.0f} บาท/วัน "
+                label=(f"{accessory['name']} ({accessory['platform']}) · "
+                       f"{accessory['daily_rate']:,.0f} บาท/วัน "
                        f"(เหลือ {accessory['quantity_available']})"),
                 on_change=self.update_rent_estimate,
             )
@@ -480,11 +377,16 @@ class RentalApp:
                 keyboard_type=ft.KeyboardType.NUMBER,
                 on_change=self.update_rent_estimate,
             )
-            self.rent_accessory_fields.append(
-                (accessory["accessory_id"], selected, quantity))
-            accessory_rows.append(
-                ft.Row([selected, quantity], spacing=12,
-                       vertical_alignment=ft.CrossAxisAlignment.CENTER))
+            accessory_row = ft.Row(
+                [selected, quantity],
+                spacing=12,
+                visible=not accessory["platform"],
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+            self.rent_accessory_fields.append((
+                accessory["accessory_id"], selected, quantity,
+                accessory["platform"], accessory_row))
+            accessory_rows.append(accessory_row)
 
         if not options:
             return ft.Column(
@@ -494,11 +396,11 @@ class RentalApp:
                 expand=True,
             )
 
-        console_field = self.customer_console_field if customer else self.staff_console_field
-        name_field = self.customer_name_field if customer else self.staff_name_field
-        phone_field = self.customer_phone_field if customer else self.staff_phone_field
-        days_field = self.customer_days_field if customer else self.staff_days_field
-        estimate = self.customer_estimate if customer else self.staff_estimate
+        console_field = self.staff_console_field
+        name_field = self.staff_name_field
+        phone_field = self.staff_phone_field
+        days_field = self.staff_days_field
+        estimate = self.staff_estimate
         return ft.Column(
             [
                 self.page_heading("เช่าเครื่อง", "กรอกข้อมูลลูกค้าและเลือกระยะเวลาเช่า", refresh=False),
@@ -508,11 +410,15 @@ class RentalApp:
                             console_field,
                             name_field,
                             phone_field,
+                            self.coupon_code_field,
+                            ft.Text("ส่วนลดคิดจากค่าเช่าจริง ไม่ลดค่าปรับล่าช้า", size=12, color=MUTED),
                             ft.Row([days_field, estimate], spacing=24,
                                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
                             self.section(
                                 ft.Column(
                                     [ft.Text("อุปกรณ์เสริม (ไม่บังคับ)", weight=ft.FontWeight.BOLD),
+                                     ft.Text("เลือกเครื่องก่อนเพื่อแสดงอุปกรณ์ที่ใช้ร่วมกันได้",
+                                             color=MUTED),
                                      *(accessory_rows or [ft.Text("ไม่มีอุปกรณ์เสริมพร้อมให้เช่า",
                                                                    color=MUTED)])],
                                     spacing=8,
@@ -522,7 +428,7 @@ class RentalApp:
                             ft.FilledButton(
                                 "ยืนยันการเช่า",
                                 icon=ft.Icons.CHECK,
-                                on_click=lambda: self.submit_rental(customer),
+                                on_click=self.submit_rental,
                             ),
                         ],
                         spacing=18,
@@ -537,22 +443,29 @@ class RentalApp:
         )
 
     def update_rent_estimate(self):
-        customer = self.mode == "customer"
-        console_field = getattr(self, "customer_console_field" if customer else "staff_console_field", None)
-        days_field = getattr(self, "customer_days_field" if customer else "staff_days_field", None)
-        estimate = getattr(self, "customer_estimate" if customer else "staff_estimate", None)
-        if console_field is None or days_field is None or estimate is None:
-            return
+        console_field = self.staff_console_field
+        days_field = self.staff_days_field
+        estimate = self.staff_estimate
         try:
             console_id = int(console_field.value)
             days = int(days_field.value)
-            rate = self.rate_by_id[console_id]
+            console = self.console_by_id[console_id]
+            rate = console["daily_rate"]
         except (TypeError, ValueError, KeyError):
             estimate.value = "ราคาโดยประมาณ: -"
+            for _, selected, _, platform, accessory_row in self.rent_accessory_fields:
+                accessory_row.visible = not platform
+                if platform:
+                    selected.value = False
         else:
             accessory_total = 0
             try:
-                for accessory_id, selected, quantity in self.rent_accessory_fields:
+                for accessory_id, selected, quantity, platform, accessory_row in self.rent_accessory_fields:
+                    accessory_row.visible = (
+                        not platform or platform == console["platform"])
+                    # ยกเลิกอุปกรณ์ที่ซ่อนอยู่เมื่อเปลี่ยนไปเลือกเครื่องคนละแพลตฟอร์ม
+                    if not accessory_row.visible:
+                        selected.value = False
                     if selected.value:
                         accessory_total += (
                             self.accessory_by_id[accessory_id]["daily_rate"]
@@ -562,14 +475,14 @@ class RentalApp:
                 estimate.value = "ตรวจสอบจำนวนอุปกรณ์เสริม"
             else:
                 estimate.value = f"ราคาโดยประมาณ: {rate * days + accessory_total:,.0f} บาท"
-        if estimate.page is not None:
-            estimate.update()
+        if self.page is not None:
+            self.page.update()
 
-    def submit_rental(self, customer):
-        console_field = self.customer_console_field if customer else self.staff_console_field
-        name_field = self.customer_name_field if customer else self.staff_name_field
-        phone_field = self.customer_phone_field if customer else self.staff_phone_field
-        days_field = self.customer_days_field if customer else self.staff_days_field
+    def submit_rental(self):
+        console_field = self.staff_console_field
+        name_field = self.staff_name_field
+        phone_field = self.staff_phone_field
+        days_field = self.staff_days_field
         try:
             console_id = int(console_field.value)
         except (TypeError, ValueError):
@@ -577,126 +490,25 @@ class RentalApp:
             return
         accessories = [
             {"accessory_id": accessory_id, "quantity": quantity.value}
-            for accessory_id, selected, quantity in self.rent_accessory_fields
+            for accessory_id, selected, quantity, _, _ in self.rent_accessory_fields
             if selected.value
         ]
+        customer_access_code = logic.generate_customer_access_code()
         ok, message = logic.add_rental(
             console_id,
             name_field.value.strip(),
             phone_field.value.strip(),
             days_field.value.strip(),
             accessories=accessories,
+            coupon_code=self.coupon_code_field.value,
+            customer_access_code=customer_access_code,
         )
         if not ok:
             self.show_message(message, error=True)
             return
-        if customer:
-            self.customer_lookup_phone = phone_field.value.strip()
-        self.show_message(message)
-        self.view_index = 2 if customer else 0
+        self.view_index = 0
         self.render()
-
-    def customer_rentals_view(self):
-        phone_field = ft.TextField(
-            label="เบอร์โทร 10 หลัก",
-            value=self.customer_lookup_phone,
-            width=280,
-            keyboard_type=ft.KeyboardType.PHONE,
-            on_submit=self.search_customer_rentals,
-        )
-        self.customer_phone_search_field = phone_field
-        rentals = self.load_customer_rentals(self.customer_lookup_phone)
-        content = [
-            self.page_heading("รายการเช่าของฉัน", "ค้นหาด้วยเบอร์โทรที่ใช้ตอนเช่า", refresh=False),
-            self.section(
-                ft.Row(
-                    [
-                        phone_field,
-                        ft.FilledButton("ค้นหา", icon=ft.Icons.SEARCH,
-                                        on_click=self.search_customer_rentals),
-                    ],
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                padding=18,
-            ),
-        ]
-        if rentals:
-            columns = ["รหัสเช่า", "เครื่อง", "อุปกรณ์เสริม", "วันที่เช่า", "กำหนดคืน", "สถานะ"]
-            rows = []
-            for rental in rentals:
-                rows.append(
-                    ft.DataRow(
-                        selected=self.selected_rental_id == rental["rental_id"],
-                        on_select_change=lambda event, rental_id=rental["rental_id"]:
-                            self.select_customer_rental(event, rental_id),
-                        cells=[
-                            ft.DataCell(ft.Text(str(rental["rental_id"]))),
-                            ft.DataCell(ft.Text(rental["console_name"])),
-                            ft.DataCell(ft.Text(rental.get("accessory_summary") or "-")),
-                            ft.DataCell(ft.Text(rental["rent_date"])),
-                            ft.DataCell(ft.Text(rental["due_date"])),
-                            ft.DataCell(ft.Text(rental["return_status"])),
-                        ],
-                    )
-                )
-            content.append(
-                self.section(
-                    ft.Column(
-                        [
-                            ft.Text("เลือกรายการเพื่อส่งคำขอคืน", color=MUTED),
-                            self.data_table(
-                                [ft.DataColumn(ft.Text(label)) for label in columns],
-                                rows,
-                                selectable=True,
-                            ),
-                            ft.FilledButton(
-                                "แจ้งขอคืนเครื่อง",
-                                icon=ft.Icons.ASSIGNMENT_RETURN,
-                                on_click=self.request_customer_return,
-                            ),
-                        ],
-                        spacing=16,
-                    )
-                )
-            )
-        else:
-            content.append(self.empty_state("ไม่พบรายการเช่าของเบอร์โทรนี้" if self.customer_lookup_phone
-                                            else "กรอกเบอร์โทรเพื่อค้นหารายการเช่า"))
-        return ft.Column(content, spacing=18, scroll=ft.ScrollMode.AUTO, expand=True)
-
-    def load_customer_rentals(self, phone):
-        if not phone:
-            return []
-        rentals = logic.get_rentals_by_phone(phone)
-        return [dict(rental, return_status=rental_status(rental)) for rental in rentals]
-
-    def search_customer_rentals(self):
-        field = getattr(self, "customer_phone_search_field", None)
-        if field is not None:
-            self.customer_lookup_phone = field.value.strip()
-        self.selected_rental_id = None
-        self.render_view()
-
-    def select_customer_rental(self, event, rental_id):
-        self.selected_rental_id = rental_id if event.control.selected else None
-        self.render_view()
-
-    def request_customer_return(self):
-        rental_id = self.selected_rental_id
-        if rental_id is None:
-            self.show_message("กรุณาเลือกรายการเช่าก่อน", error=True)
-            return
-        self.confirm(
-            "แจ้งขอคืนเครื่อง",
-            "ส่งคำขอคืนรายการนี้ใช่ไหม? กรุณานำเครื่องให้พนักงานตรวจรับ",
-            lambda: self.finish_customer_return(rental_id),
-        )
-
-    def finish_customer_return(self, rental_id):
-        ok, message = logic.request_my_return(rental_id, self.customer_lookup_phone)
-        self.show_message(message, error=not ok)
-        self.render_view()
+        self.show_rental_success(message, customer_access_code)
 
     def staff_returns_view(self):
         self.rentals = logic.get_all_rentals()
@@ -706,16 +518,23 @@ class RentalApp:
         ]
         if active:
             rows = []
+            # ซิงก์ checkbox ทุกแถว เพราะยืนยันคืนได้ครั้งละหนึ่งรายการ
+            self.staff_return_checkboxes = {}
             for rental in active:
                 color = BAD if rental["due_date"] < date.today().isoformat() else (
                     GOOD if rental.get("return_requested_at") is not None else INK
                 )
+                rental_id = rental["rental_id"]
+                selection = ft.Checkbox(
+                    value=self.selected_rental_id == rental_id,
+                    on_change=lambda event, selected_id=rental_id:
+                        self.select_staff_rental(event, selected_id),
+                )
+                self.staff_return_checkboxes[rental_id] = selection
                 rows.append(
                     ft.DataRow(
-                        selected=self.selected_rental_id == rental["rental_id"],
-                        on_select_change=lambda event, rental_id=rental["rental_id"]:
-                            self.select_staff_rental(event, rental_id),
                         cells=[
+                            ft.DataCell(selection),
                             ft.DataCell(ft.Text(str(rental["rental_id"]), color=color)),
                             ft.DataCell(ft.Text(rental["console_name"], color=color)),
                             ft.DataCell(ft.Text(rental.get("accessory_summary") or "-", color=color)),
@@ -732,10 +551,9 @@ class RentalApp:
                         [
                             self.data_table(
                                 [ft.DataColumn(ft.Text(label)) for label in
-                                 ("รหัสเช่า", "เครื่อง", "อุปกรณ์เสริม", "ลูกค้า", "เบอร์โทร",
-                                  "กำหนดคืน", "สถานะ")],
+                                                                 ("เลือก", "รหัสเช่า", "เครื่อง", "อุปกรณ์เสริม", "ลูกค้า",
+                                                                    "เบอร์โทร", "กำหนดคืน", "สถานะ")],
                                 rows,
-                                selectable=True,
                             ),
                             ft.FilledButton(
                                 "ยืนยันรับคืนเครื่อง",
@@ -752,8 +570,10 @@ class RentalApp:
         return ft.Column(content, spacing=18, scroll=ft.ScrollMode.AUTO, expand=True)
 
     def select_staff_rental(self, event, rental_id):
-        self.selected_rental_id = rental_id if event.control.selected else None
-        self.render_view()
+        self.selected_rental_id = rental_id if event.control.value else None
+        for checkbox_id, checkbox in self.staff_return_checkboxes.items():
+            checkbox.value = checkbox_id == self.selected_rental_id
+        self.page.update()
 
     def confirm_staff_return(self):
         rental_id = self.selected_rental_id
@@ -783,14 +603,19 @@ class RentalApp:
             )
         table = self.data_table(
             [ft.DataColumn(ft.Text(label)) for label in
-                 ("รหัส", "เครื่อง", "อุปกรณ์เสริม", "ลูกค้า", "เบอร์โทร", "เช่า",
-                  "กำหนดคืน", "คืนจริง", "ยอดรวม")],
+                 ("รหัส", "เครื่อง", "อุปกรณ์เสริม", "คูปอง", "ส่วนลด", "ลูกค้า",
+                "เบอร์โทร", "เช่า", "กำหนดคืน", "คืนจริง", "ยอดรวม")],
             [
                 ft.DataRow(
                     cells=[
                         ft.DataCell(ft.Text(str(rental["rental_id"]))),
                         ft.DataCell(ft.Text(rental["console_name"])),
                         ft.DataCell(ft.Text(rental.get("accessory_summary") or "-")),
+                        ft.DataCell(ft.Text(rental.get("coupon_code") or "-")),
+                        ft.DataCell(ft.Text(
+                            f"{rental['discount_amount']:,.0f} บาท"
+                            if rental.get("coupon_code") and rental.get("return_date")
+                            else "คำนวณตอนคืน" if rental.get("coupon_code") else "-")),
                         ft.DataCell(ft.Text(rental["customer_name"])),
                         ft.DataCell(ft.Text(rental["phone"])),
                         ft.DataCell(ft.Text(rental["rent_date"])),
@@ -859,6 +684,12 @@ class RentalApp:
     def staff_accessories_view(self):
         accessories = logic.get_all_accessories()
         self.new_accessory_name = ft.TextField(label="ชื่ออุปกรณ์", width=520)
+        self.new_accessory_platform = ft.Dropdown(
+            label="แพลตฟอร์ม",
+            width=240,
+            options=[ft.DropdownOption(key=platform, text=platform)
+                     for platform in PLATFORMS],
+        )
         self.new_accessory_rate = ft.TextField(
             label="ราคาเช่าต่อวัน (บาท, ใส่ 0 หากไม่คิดเงิน)",
             value="0",
@@ -878,6 +709,7 @@ class RentalApp:
                 ft.DataRow(cells=[
                     ft.DataCell(ft.Text(str(item["accessory_id"]))),
                     ft.DataCell(ft.Text(item["name"])),
+                    ft.DataCell(ft.Text(item["platform"] or "ทุกแพลตฟอร์ม")),
                     ft.DataCell(ft.Text(f"{item['daily_rate']:,.0f} บาท")),
                     ft.DataCell(ft.Text(str(item["quantity_total"]))),
                     ft.DataCell(ft.Text(str(item["quantity_available"]))),
@@ -887,7 +719,8 @@ class RentalApp:
             ]
             content.append(self.section(self.data_table(
                 [ft.DataColumn(ft.Text(label)) for label in
-                 ("รหัส", "อุปกรณ์", "ราคา/วัน", "ทั้งหมด", "พร้อมให้เช่า", "สถานะ")],
+                 ("รหัส", "อุปกรณ์", "แพลตฟอร์ม", "ราคา/วัน", "ทั้งหมด",
+                  "พร้อมให้เช่า", "สถานะ")],
                 rows,
             )))
         else:
@@ -898,7 +731,8 @@ class RentalApp:
                     [
                         ft.Text("เพิ่มอุปกรณ์", size=17, weight=ft.FontWeight.BOLD, color=INK),
                         self.new_accessory_name,
-                        ft.Row([self.new_accessory_rate, self.new_accessory_quantity], spacing=14),
+                        ft.Row([self.new_accessory_platform, self.new_accessory_rate], spacing=14),
+                        self.new_accessory_quantity,
                         ft.FilledButton("เพิ่มอุปกรณ์", icon=ft.Icons.ADD,
                                         on_click=self.submit_new_accessory),
                     ],
@@ -913,8 +747,200 @@ class RentalApp:
     def submit_new_accessory(self):
         ok, message = logic.add_accessory(
             self.new_accessory_name.value,
+            self.new_accessory_platform.value,
             self.new_accessory_rate.value,
             self.new_accessory_quantity.value,
+        )
+        self.show_message(message, error=not ok)
+        if ok:
+            self.render_view()
+
+    def staff_maintenance_view(self):
+        consoles = [console for console in logic.get_all_consoles()
+                    if console["status"] == "available"]
+        options = [
+            ft.DropdownOption(
+                key=str(console["console_id"]),
+                text=f"{console['name']} · {console['platform']}",
+            )
+            for console in consoles
+        ]
+        self.maintenance_console_field = ft.Dropdown(
+            label="เลือกเครื่องที่ว่าง",
+            options=options,
+            enable_search=True,
+            width=520,
+        )
+        self.maintenance_issue_field = ft.TextField(
+            label="อาการเสียหรือรายละเอียดที่พบ",
+            multiline=True,
+            min_lines=2,
+            max_lines=4,
+            width=520,
+        )
+        records = logic.get_maintenance_records(open_only=True)
+        content = [
+            self.page_heading("ซ่อมบำรุงเครื่อง", "เปิดงานซ่อมและบันทึกผลก่อนนำเครื่องกลับมาให้เช่า"),
+            self.section(
+                ft.Column(
+                    [
+                        ft.Text("แจ้งซ่อม", size=17, weight=ft.FontWeight.BOLD, color=INK),
+                        self.maintenance_console_field,
+                        self.maintenance_issue_field,
+                        ft.FilledButton("เปิดงานซ่อม", icon=ft.Icons.BUILD,
+                                        on_click=self.submit_maintenance_report),
+                    ],
+                    spacing=16,
+                    width=600,
+                ),
+                padding=24,
+            ),
+        ]
+        if records:
+            rows = [
+                ft.DataRow(cells=[
+                    ft.DataCell(ft.Text(str(record["maintenance_id"]))),
+                    ft.DataCell(ft.Text(record["console_name"])),
+                    ft.DataCell(ft.Text(record["platform"])),
+                    ft.DataCell(ft.Text(record["issue"])),
+                    ft.DataCell(ft.Text(record["reported_at"])),
+                    ft.DataCell(ft.OutlinedButton(
+                        "บันทึกซ่อมเสร็จ",
+                        icon=ft.Icons.CHECK,
+                        on_click=lambda event, record_id=record["maintenance_id"]:
+                            self.open_maintenance_completion_dialog(record_id),
+                    )),
+                ])
+                for record in records
+            ]
+            content.append(self.section(self.data_table(
+                [ft.DataColumn(ft.Text(label)) for label in
+                 ("รหัสงาน", "เครื่อง", "แพลตฟอร์ม", "อาการ", "วันที่แจ้ง", "จัดการ")],
+                rows,
+            )))
+        else:
+            content.append(self.empty_state("ไม่มีงานซ่อมที่เปิดอยู่"))
+        return ft.Column(content, spacing=18, scroll=ft.ScrollMode.AUTO, expand=True)
+
+    def submit_maintenance_report(self):
+        try:
+            console_id = int(self.maintenance_console_field.value)
+        except (TypeError, ValueError):
+            self.show_message("กรุณาเลือกเครื่องก่อน", error=True)
+            return
+        ok, message = logic.report_console_issue(
+            console_id, self.maintenance_issue_field.value)
+        self.show_message(message, error=not ok)
+        if ok:
+            self.render_view()
+
+    def open_maintenance_completion_dialog(self, maintenance_id):
+        repair_cost = ft.TextField(
+            label="ค่าซ่อม (บาท)",
+            value="0",
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
+        notes = ft.TextField(
+            label="หมายเหตุ",
+            multiline=True,
+            min_lines=2,
+            max_lines=4,
+        )
+
+        def finish_repair():
+            ok, message = logic.complete_console_repair(
+                maintenance_id, repair_cost.value, notes.value)
+            self.page.pop_dialog()
+            self.show_message(message, error=not ok)
+            if ok:
+                self.render_view()
+
+        self.page.show_dialog(
+            ft.AlertDialog(
+                modal=True,
+                title=ft.Text("บันทึกผลซ่อม"),
+                content=ft.Column([repair_cost, notes], tight=True, spacing=12),
+                actions=[
+                    ft.TextButton("ยกเลิก", on_click=self.page.pop_dialog),
+                    ft.FilledButton("ปิดงานซ่อม", on_click=finish_repair),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            )
+        )
+
+    def staff_coupons_view(self):
+        coupons = logic.get_all_coupons()
+        self.new_coupon_code = ft.TextField(label="รหัสคูปอง", width=520)
+        self.new_coupon_type = ft.Dropdown(
+            label="ประเภทส่วนลด",
+            value="percent",
+            width=240,
+            options=[
+                ft.DropdownOption(key="percent", text="เปอร์เซ็นต์"),
+                ft.DropdownOption(key="fixed", text="จำนวนเงิน"),
+            ],
+        )
+        self.new_coupon_value = ft.TextField(
+            label="มูลค่าส่วนลด",
+            width=220,
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
+        self.new_coupon_expiry = ft.TextField(
+            label="วันหมดอายุ (YYYY-MM-DD, เว้นว่าง = ไม่หมดอายุ)",
+            width=360,
+        )
+        self.new_coupon_limit = ft.TextField(
+            label="จำนวนครั้งที่ใช้ได้ (เว้นว่าง = ไม่จำกัด)",
+            width=360,
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
+        content = [
+            self.page_heading("จัดการคูปอง", "เพิ่มโค้ดส่วนลดและตรวจสอบจำนวนครั้งที่ถูกใช้"),
+        ]
+        if coupons:
+            rows = []
+            for coupon in coupons:
+                discount = (f"{coupon['discount_value']:,.0f}%"
+                            if coupon["discount_type"] == "percent"
+                            else f"{coupon['discount_value']:,.0f} บาท")
+                limit = (str(coupon["max_uses"])
+                         if coupon["max_uses"] is not None else "ไม่จำกัด")
+                rows.append(ft.DataRow(cells=[
+                    ft.DataCell(ft.Text(coupon["code"])),
+                    ft.DataCell(ft.Text(discount)),
+                    ft.DataCell(ft.Text(coupon["valid_until"] or "ไม่หมดอายุ")),
+                    ft.DataCell(ft.Text(f"{coupon['used_count']} / {limit}")),
+                    ft.DataCell(ft.Text("เปิดใช้" if coupon["active"] else "ปิดใช้")),
+                ]))
+            content.append(self.section(self.data_table(
+                [ft.DataColumn(ft.Text(label)) for label in
+                 ("โค้ด", "ส่วนลด", "หมดอายุ", "ใช้แล้ว / จำกัด", "สถานะ")],
+                rows,
+            )))
+        else:
+            content.append(self.empty_state("ยังไม่มีคูปอง"))
+        content.append(self.section(ft.Column(
+            [
+                ft.Text("เพิ่มคูปอง", size=17, weight=ft.FontWeight.BOLD, color=INK),
+                self.new_coupon_code,
+                ft.Row([self.new_coupon_type, self.new_coupon_value], spacing=14),
+                self.new_coupon_expiry,
+                self.new_coupon_limit,
+                ft.FilledButton("เพิ่มคูปอง", icon=ft.Icons.ADD,
+                                on_click=self.submit_new_coupon),
+            ],
+            spacing=16,
+            width=600,
+        ), padding=24))
+        return ft.Column(content, spacing=18, scroll=ft.ScrollMode.AUTO, expand=True)
+
+    def submit_new_coupon(self):
+        ok, message = logic.add_coupon(
+            self.new_coupon_code.value,
+            self.new_coupon_type.value,
+            self.new_coupon_value.value,
+            self.new_coupon_expiry.value,
+            self.new_coupon_limit.value,
         )
         self.show_message(message, error=not ok)
         if ok:
@@ -945,18 +971,16 @@ class RentalApp:
         pin_field = ft.TextField(label="PIN พนักงาน", password=True,
                                  can_reveal_password=True, autofocus=True)
 
-        def close_dialog():
-            self.page.pop_dialog()
-
         def submit_pin():
+            if not logic.check_staff_pin(pin_field.value or ""):
+                pin_field.value = ""
+                pin_field.error_text = "PIN ไม่ถูกต้อง"
+                pin_field.update()
+                return
             self.page.pop_dialog()
-            if logic.check_staff_pin(pin_field.value or ""):
-                self.selected_rental_id = None
-                self.mode = "staff"
-                self.view_index = 0
-                self.render()
-            else:
-                self.show_message("PIN ไม่ถูกต้อง", error=True)
+            self.selected_rental_id = None
+            self.view_index = 0
+            self.render()
 
         self.page.show_dialog(
             ft.AlertDialog(
@@ -964,24 +988,11 @@ class RentalApp:
                 title=ft.Text("เข้าสู่โหมดพนักงาน"),
                 content=pin_field,
                 actions=[
-                    ft.TextButton("ยกเลิก", on_click=close_dialog),
                     ft.FilledButton("เข้าสู่ระบบ", on_click=submit_pin),
                 ],
                 actions_alignment=ft.MainAxisAlignment.END,
             )
         )
-
-    def enter_customer_mode(self):
-        self.mode = "customer"
-        self.view_index = 0
-        self.selected_rental_id = None
-        self.render()
-
-    def show_mode_picker(self):
-        self.mode = None
-        self.view_index = 0
-        self.selected_rental_id = None
-        self.render()
 
     def toggle_theme(self):
         self.theme_mode = (ft.ThemeMode.LIGHT if self.theme_mode == ft.ThemeMode.DARK
@@ -995,6 +1006,41 @@ class RentalApp:
                 modal=True,
                 title=ft.Text("ไม่สำเร็จ" if error else "เรียบร้อย"),
                 content=ft.Text(message),
+                actions=[ft.TextButton("ตกลง", on_click=self.page.pop_dialog)],
+            )
+        )
+
+    def show_rental_success(self, message, access_code):
+        content = [ft.Text(message)]
+        try:
+            customer_url = customer_links.rental_url(access_code)
+        except (OSError, ValueError) as error:
+            content.append(
+                ft.Text(
+                    f"สร้าง QR ไม่สำเร็จ: {error}\n"
+                    "แจ้งรหัสด้านบนให้ลูกค้า และตรวจสอบการตั้งค่า URL ของหน้าเว็บ",
+                    color=WARN,
+                )
+            )
+        else:
+            qr_image = qrcode.make(customer_url)
+            image_data = BytesIO()
+            qr_image.save(image_data, format="PNG")
+            content.extend([
+                ft.Text("ให้ลูกค้าสแกน QR นี้เพื่อเปิดรายการเช่า", color=MUTED),
+                ft.Image(
+                    src=image_data.getvalue(),
+                    width=220,
+                    height=220,
+                    fit=ft.BoxFit.CONTAIN,
+                ),
+                ft.Text(customer_url, size=11, color=MUTED, selectable=True),
+            ])
+        self.page.show_dialog(
+            ft.AlertDialog(
+                modal=True,
+                title=ft.Text("ทำรายการเช่าสำเร็จ"),
+                content=ft.Column(content, tight=True, scroll=ft.ScrollMode.AUTO),
                 actions=[ft.TextButton("ตกลง", on_click=self.page.pop_dialog)],
             )
         )
