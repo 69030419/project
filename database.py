@@ -9,7 +9,6 @@ logic.py เรียกฟังก์ชันในไฟล์นี้เ�
 
 ตั้งค่าการเชื่อมต่อใน db_config.py (ห้าม commit) ดูตัวอย่างที่ db_config.example.py
 """
-import os
 from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
@@ -17,7 +16,7 @@ from decimal import Decimal
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip() or None
+from db_config import DB_CONFIG
 
 # ใส่เครื่องตัวอย่างให้ตอนสร้างตารางครั้งแรก (ตารางว่างเท่านั้น) ปิดได้ด้วยการตั้งเป็น False
 SEED_SAMPLE_CONSOLES = True
@@ -76,7 +75,6 @@ CREATE TABLE IF NOT EXISTS rentals (
     due_date     DATE NOT NULL CHECK (due_date >= rent_date),
     return_date  DATE,
     return_requested_at TIMESTAMP,
-    customer_access_code_hash VARCHAR(64),
     total_price  NUMERIC(10,2) NOT NULL DEFAULT 0
 );
 
@@ -167,13 +165,6 @@ def _clean(row):
 def _connect():
     """เปิด connection โดยบังคับให้ฝั่งโปรแกรมคุยเป็น UTF-8 เสมอ
     (กันปัญหาภาษาไทยเมื่อฐานข้อมูลถูกสร้างด้วย encoding อื่น เช่น WIN874 บน Windows ไทย)"""
-    if DATABASE_URL is not None:
-        return psycopg2.connect(
-            DATABASE_URL,
-            client_encoding="UTF8",
-            sslmode=os.environ.get("DATABASE_SSLMODE", "require"),
-        )
-    from db_config import DB_CONFIG
     return psycopg2.connect(**DB_CONFIG, client_encoding="UTF8")
 
 
@@ -207,13 +198,6 @@ def _ensure_tables():
                     "CHECK (status IN ('available', 'rented', 'maintenance'))")
                 cur.execute(
                     "ALTER TABLE rentals ADD COLUMN IF NOT EXISTS return_requested_at TIMESTAMP")
-                cur.execute(
-                    "ALTER TABLE rentals ADD COLUMN IF NOT EXISTS "
-                    "customer_access_code_hash VARCHAR(64)")
-                cur.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS rentals_access_code_hash_unique "
-                    "ON rentals(customer_access_code_hash) "
-                    "WHERE customer_access_code_hash IS NOT NULL")
                 cur.execute(
                     "ALTER TABLE accessories ADD COLUMN IF NOT EXISTS platform "
                     "VARCHAR(50) NOT NULL DEFAULT ''")
@@ -405,8 +389,7 @@ def insert_rental(console_id, customer_id, rent_date, due_date):
 
 
 def create_rental_transaction(console_id, customer_name, phone, rent_date, due_date,
-                              accessories=None, coupon_code=None,
-                              customer_access_code_hash=None):
+                              accessories=None, coupon_code=None):
     with _cursor() as cur:
     # ล็อกเครื่องและอุปกรณ์ตามลำดับคงที่ เพื่อป้องกันการเช่าพร้อมกันจนสต็อกเกินจำนวน
         cur.execute("SELECT status, platform FROM consoles WHERE console_id = %s FOR UPDATE",
@@ -467,11 +450,9 @@ def create_rental_transaction(console_id, customer_name, phone, rent_date, due_d
             "RETURNING customer_id", (customer_name, phone))
         customer_id = cur.fetchone()["customer_id"]
         cur.execute(
-            "INSERT INTO rentals "
-            "(console_id, customer_id, rent_date, due_date, customer_access_code_hash) "
-            "VALUES (%s, %s, %s, %s, %s) RETURNING rental_id",
-            (console_id, customer_id, rent_date, due_date,
-             customer_access_code_hash))
+            "INSERT INTO rentals (console_id, customer_id, rent_date, due_date) "
+            "VALUES (%s, %s, %s, %s) RETURNING rental_id",
+            (console_id, customer_id, rent_date, due_date))
         rental_id = cur.fetchone()["rental_id"]
         # บันทึกราคาปัจจุบันของอุปกรณ์ไว้เป็น snapshot สำหรับประวัติและการคิดเงินตอนคืน
         cur.executemany(
@@ -503,21 +484,6 @@ def fetch_all_rentals():
 def fetch_rental(rental_id):
     with _cursor() as cur:
         cur.execute(RENTAL_SELECT + " WHERE r.rental_id = %s", (rental_id,))
-        return _clean(cur.fetchone())
-
-
-def fetch_public_rental_by_access_code_hash(access_code_hash):
-    with _cursor() as cur:
-        cur.execute(
-            "SELECT c.name AS console_name, c.platform, r.rent_date, r.due_date, "
-            "r.return_date, r.return_requested_at, r.total_price, "
-            "COALESCE((SELECT STRING_AGG(a.name || ' x ' || ra.quantity::TEXT, ', ' "
-            "ORDER BY a.name) FROM rental_accessories ra "
-            "JOIN accessories a ON a.accessory_id = ra.accessory_id "
-            "WHERE ra.rental_id = r.rental_id), '') AS accessory_summary "
-            "FROM rentals r JOIN consoles c ON c.console_id = r.console_id "
-            "WHERE r.customer_access_code_hash = %s",
-            (access_code_hash,))
         return _clean(cur.fetchone())
 
 

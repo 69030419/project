@@ -6,9 +6,7 @@ ui.py เรียกฟังก์ชันในไฟล์นี้เท�
 ที่ UI เอาไปแสดงใน messagebox ได้ทันที
 """
 import functools
-import hashlib
 import math
-import secrets
 from datetime import date, timedelta
 
 import database
@@ -17,8 +15,6 @@ import database
 MIN_DAYS = 1
 MAX_DAYS = 30
 PHONE_LENGTH = 10
-CUSTOMER_ACCESS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-CUSTOMER_ACCESS_CODE_LENGTH = 20
 LATE_FEE_RATE = 0.5      # ค่าปรับต่อวันที่เกินกำหนด = ราคาต่อวัน x ค่านี้
 MIN_CHARGE_DAYS = 1      # คิดเงินขั้นต่ำกี่วัน
 STAFF_PIN = "1234"
@@ -64,21 +60,6 @@ def get_rentals_by_phone(phone):
     phone = (phone or "").strip()
     return [rental for rental in database.fetch_all_rentals()
             if rental["phone"] == phone]
-
-
-def get_rental_for_customer_code(access_code):
-    access_code = (access_code or "").strip().upper()
-    if (len(access_code) != CUSTOMER_ACCESS_CODE_LENGTH
-            or any(char not in CUSTOMER_ACCESS_CODE_ALPHABET for char in access_code)):
-        return None
-    access_code_hash = hashlib.sha256(access_code.encode("ascii")).hexdigest()
-    return database.fetch_public_rental_by_access_code_hash(access_code_hash)
-
-
-def generate_customer_access_code():
-    return "".join(
-        secrets.choice(CUSTOMER_ACCESS_CODE_ALPHABET)
-        for _ in range(CUSTOMER_ACCESS_CODE_LENGTH))
 
 
 @_safe
@@ -304,66 +285,74 @@ def validate_rental(console_id, customer_name, phone, days, accessories=None,
     return True, ""
 
 
-@_safe
 def add_rental(console_id, customer_name, phone, days, accessories=None,
-               coupon_code=None, customer_access_code=None):
-    selected_accessories = _normalize_accessories(accessories)
-    if selected_accessories is None:
-        return False, "จำนวนอุปกรณ์เสริมไม่ถูกต้อง"
-    ok, message = validate_rental(
-        console_id, customer_name, phone, days, selected_accessories, coupon_code)
-    if not ok:
-        return False, message
+               coupon_code=None):
+    try:
+        selected_accessories = _normalize_accessories(accessories)
+        if selected_accessories is None:
+            return False, "จำนวนอุปกรณ์เสริมไม่ถูกต้อง", None
+        ok, message = validate_rental(
+            console_id, customer_name, phone, days, selected_accessories, coupon_code)
+        if not ok:
+            return False, message, None
 
-    customer_name = customer_name.strip()
-    phone = phone.strip()
-    days = int(days)
-    console = database.fetch_console(console_id)
-    accessories_by_id = {
-        item["accessory_id"]: item for item in database.fetch_all_accessories()
-    }
-    # คำนวณราคาโดยประมาณจากค่าเช่าต่อวันปัจจุบันของอุปกรณ์ที่เลือก
-    accessory_total = sum(
-        accessories_by_id[item["accessory_id"]]["daily_rate"] * item["quantity"] * days
-        for item in selected_accessories
-    )
-    coupon_ok, coupon_message, coupon = _get_usable_coupon(coupon_code)
-    if not coupon_ok:
-        return False, coupon_message
+        customer_name = customer_name.strip()
+        phone = phone.strip()
+        days = int(days)
+        console = database.fetch_console(console_id)
+        accessories_by_id = {
+            item["accessory_id"]: item for item in database.fetch_all_accessories()
+        }
+        # คำนวณราคาโดยประมาณจากค่าเช่าต่อวันปัจจุบันของอุปกรณ์ที่เลือก
+        accessory_total = sum(
+            accessories_by_id[item["accessory_id"]]["daily_rate"] * item["quantity"] * days
+            for item in selected_accessories
+        )
+        coupon_ok, coupon_message, coupon = _get_usable_coupon(coupon_code)
+        if not coupon_ok:
+            return False, coupon_message, None
 
-    today = date.today()
-    due = today + timedelta(days=days)
-    customer_access_code = (customer_access_code
-                            or generate_customer_access_code())
-    customer_access_code = customer_access_code.strip().upper()
-    if (len(customer_access_code) != CUSTOMER_ACCESS_CODE_LENGTH
-            or any(char not in CUSTOMER_ACCESS_CODE_ALPHABET
-                   for char in customer_access_code)):
-        return False, "รหัสสำหรับเข้าดูรายการเช่าไม่ถูกต้อง"
-    customer_access_code_hash = hashlib.sha256(
-        customer_access_code.encode("ascii")).hexdigest()
-    rental_id = database.create_rental_transaction(
-        console_id, customer_name, phone, today.isoformat(), due.isoformat(),
-        accessories=selected_accessories,
-        coupon_code=coupon["code"] if coupon else None,
-        customer_access_code_hash=customer_access_code_hash)
-    if rental_id is None:
-        return False, "เครื่อง อุปกรณ์ หรือคูปองไม่พร้อมใช้แล้ว กรุณารีเฟรชแล้วลองอีกครั้ง"
+        today = date.today()
+        due = today + timedelta(days=days)
+        rental_id = database.create_rental_transaction(
+            console_id, customer_name, phone, today.isoformat(), due.isoformat(),
+            accessories=selected_accessories,
+            coupon_code=coupon["code"] if coupon else None)
+        if rental_id is None:
+            return False, "เครื่อง อุปกรณ์ หรือคูปองไม่พร้อมใช้แล้ว กรุณารีเฟรชแล้วลองอีกครั้ง", None
 
-    base_estimate = console["daily_rate"] * days + accessory_total
-    discount = calculate_coupon_discount(
-        base_estimate, coupon["discount_type"], coupon["discount_value"]
-    ) if coupon else 0
-    estimate = base_estimate - discount
-    message = (f"เช่า {console['name']} เป็นเวลา {days} วัน เรียบร้อย\n"
-               f"กำหนดคืน {due.isoformat()}  ราคาโดยประมาณ {estimate:,.0f} บาท")
-    message += (f"\nรหัสสำหรับดูรายการบนหน้าเว็บ: {customer_access_code}"
-                "\nกรุณาแจ้งรหัสนี้ให้ลูกค้าเก็บไว้")
-    if selected_accessories:
-        message += f"\nรวมค่าอุปกรณ์เสริม {accessory_total:,.0f} บาท"
-    if coupon:
-        message += f"\nส่วนลดคูปอง {coupon['code']} -{discount:,.0f} บาท"
-    return True, message
+        base_estimate = console["daily_rate"] * days + accessory_total
+        discount = calculate_coupon_discount(
+            base_estimate, coupon["discount_type"], coupon["discount_value"]
+        ) if coupon else 0
+        estimate = base_estimate - discount
+        accessory_details = [
+            {"name": accessories_by_id[item["accessory_id"]]["name"],
+             "quantity": item["quantity"]}
+            for item in selected_accessories
+        ]
+        receipt = {
+            "rental_id": rental_id,
+            "customer_name": customer_name,
+            "phone": phone,
+            "console_name": console["name"],
+            "accessories": accessory_details,
+            "rent_date": today.isoformat(),
+            "due_date": due.isoformat(),
+            "days": days,
+            "coupon_code": coupon["code"] if coupon else "",
+            "discount_amount": discount,
+            "estimated_total": estimate,
+        }
+        message = (f"เช่า {console['name']} เป็นเวลา {days} วัน เรียบร้อย\n"
+                   f"กำหนดคืน {due.isoformat()}  ราคาโดยประมาณ {estimate:,.0f} บาท")
+        if selected_accessories:
+            message += f"\nรวมค่าอุปกรณ์เสริม {accessory_total:,.0f} บาท"
+        if coupon:
+            message += f"\nส่วนลดคูปอง {coupon['code']} -{discount:,.0f} บาท"
+        return True, message, receipt
+    except Exception as error:  # noqa: BLE001
+        return False, f"เกิดข้อผิดพลาดกับฐานข้อมูล: {error}", None
 
 
 # ---------- คืนเครื่อง ----------
