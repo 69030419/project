@@ -11,7 +11,7 @@ def customer_web_base_url():
     configured_url = os.environ.get("CUSTOMER_WEB_URL", "").strip()
     if not configured_url:
         try:
-            import GitHub.projectnew1.db_config as db_config
+            import db_config
             configured_url = getattr(db_config, "CUSTOMER_WEB_URL", "").strip()
         except Exception:
             pass

@@ -11,7 +11,7 @@ import math
 import secrets
 from datetime import date, timedelta
 
-import GitHub.projectnew1.database as database
+import database
 
 # ---------- ค่าที่ร้านกำหนด (แก้ที่นี่ที่เดียว) ----------
 MIN_DAYS = 1
