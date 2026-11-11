@@ -5,7 +5,7 @@ from datetime import date
 
 import flet as ft
 
-import logic
+import GitHub.projectnew1.logic as logic
 
 
 # Palette - Modern Gaming Emerald Dark Theme

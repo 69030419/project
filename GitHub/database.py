@@ -173,7 +173,7 @@ def _connect():
             client_encoding="UTF8",
             sslmode=os.environ.get("DATABASE_SSLMODE", "require"),
         )
-    from db_config import DB_CONFIG
+    from GitHub.projectnew1.db_config import DB_CONFIG
     return psycopg2.connect(**DB_CONFIG, client_encoding="UTF8")
 
 

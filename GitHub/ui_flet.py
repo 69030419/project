@@ -6,8 +6,8 @@ from datetime import date
 import flet as ft
 import qrcode
 
-import customer_links
-import logic
+import GitHub.projectnew1.customer_links as customer_links
+import GitHub.projectnew1.logic as logic
 
 PLATFORMS = ["PS5", "PS4", "Xbox Series X", "Xbox One", "Nintendo Switch", "Steam Deck"]
 
