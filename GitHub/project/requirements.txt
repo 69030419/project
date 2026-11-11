@@ -1,4 +1,0 @@
-flet==1.1.2
-flet-desktop==1.1.2
-psycopg2-binary>=2.9,<3
-qrcode[pil]>=8,<9
