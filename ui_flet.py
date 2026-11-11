@@ -70,8 +70,9 @@ class RentalApp:
         self.open_staff_pin_dialog()
 
     def load_window_icon(self):
-        icon_png = os.path.abspath("icon.png")
-        icon_ico = os.path.abspath("icon.ico")
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        icon_png = os.path.join(app_dir, "icon.png")
+        icon_ico = os.path.join(app_dir, "icon.ico")
 
         if not os.path.exists(icon_ico) and os.path.exists(icon_png):
             try:
@@ -1061,4 +1062,8 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
+    if not customer_links.configured_customer_web_url():
+        from start_public import main as start_public
+
+        raise SystemExit(start_public())
     ft.run(main, view=ft.AppView.FLET_APP)

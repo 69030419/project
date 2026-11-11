@@ -10,6 +10,6 @@ DB_CONFIG = {
     "password": "ใส่รหัสผ่านของ PostgreSQL",
 }
 
-# (ไม่บังคับ) หากต้องการให้ QR Code ชี้ไปยังโดเมนอินเทอร์เน็ตสาธารณะ (เช่น Cloudflare Tunnel หรือ Cloud URL)
-# หากไม่ใส่ ระบบจะใช้วง Wi-Fi ภายในร้าน (192.168.x.x) เป็นค่าเริ่มต้น
+# (ไม่บังคับ) หากใช้ URL สาธารณะแบบคงที่ ให้ใส่ URL เช่น Cloudflare Named Tunnel
+# หากไม่ใส่ แอปพนักงานจะเปิด Cloudflare Quick Tunnel และใช้ URL ชั่วคราวให้อัตโนมัติ
 # CUSTOMER_WEB_URL = "https://your-public-domain.trycloudflare.com"
